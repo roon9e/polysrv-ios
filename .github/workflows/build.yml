@@ -301,19 +301,20 @@ jobs:
           cd "$SOURCE_DIR"
           STAGE="$RUNNER_TEMP/dsyms"
           rm -rf "$STAGE"; mkdir -p "$STAGE"
-          collect() {
-            find "$1" -name '*.dSYM' -prune -print 2>/dev/null | while read -r d; do
-              cp -R "$d" "$STAGE"/ 2>/dev/null || true
-            done
-          }
-          collect bazel-bin
-          if [ -z "$(ls -A "$STAGE" 2>/dev/null)" ]; then
-            collect bazel-out
+          # bazel-bin / bazel-out are symlinks; the trailing slash makes find follow
+          # them (a bare `find bazel-bin` descends nothing).
+          find bazel-bin/ -name '*.dSYM' -prune -print 2>/dev/null > "$RUNNER_TEMP/dsym-list.txt"
+          if [ ! -s "$RUNNER_TEMP/dsym-list.txt" ]; then
+            find bazel-out/ -name '*.dSYM' -prune -print 2>/dev/null > "$RUNNER_TEMP/dsym-list.txt"
           fi
-          echo "dSYM bundles collected: $(find "$STAGE" -maxdepth 1 -name '*.dSYM' | wc -l)"
-          ls "$STAGE" 2>/dev/null | head -40 || true
+          while read -r d; do
+            [ -n "$d" ] && cp -R "$d" "$STAGE"/ 2>/dev/null || true
+          done < "$RUNNER_TEMP/dsym-list.txt"
+          echo "dSYM bundles found: $(wc -l < "$RUNNER_TEMP/dsym-list.txt" | tr -d ' ')"
+          head -40 "$RUNNER_TEMP/dsym-list.txt" || true
           mkdir -p "$GITHUB_WORKSPACE/build/artifacts"
           (cd "$STAGE" && zip -qry "$GITHUB_WORKSPACE/build/artifacts/dsyms.zip" .) || true
+          ls -la "$GITHUB_WORKSPACE/build/artifacts" || true
 
       - name: Upload dSYMs
         if: always()
