@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
 """
-apply_branding.py - Apply a single branding/datacenter configuration over a clean
-upstream Telegram-iOS tree, in place.
+apply_branding.py - Apply a branding configuration over a clean upstream
+Telegram-iOS tree, in place.
 
 Usage:
     python3 build-system/apply_branding.py build-system/branding/branding.json [repo_root]
 
-The RSA public key is read from server_rsa.pub located next to the branding
-JSON file (PKCS#1 PEM or bare base64). Everything the script rewrites must have
-its upstream anchor text present; if a required transform cannot be applied the
-script exits non-zero so CI fails loudly instead of shipping a misbranded build.
+Everything the script rewrites must have its upstream anchor text present; if a
+required transform cannot be applied the script exits non-zero so CI fails
+loudly instead of shipping a misbranded build.
+
+The datacenter and RSA server key are NOT branded here: the multiserver runtime
+(build-system/polysrv) owns them, and the default server carries its key in
+build-system/polysrv/servers.json. Run apply_polysrv.py after this script.
 """
 import json
 import os
@@ -220,21 +223,6 @@ class Branding:
 
     # ------- building blocks -------
 
-    def rsa_key(self):
-        pem_path = os.path.join(self.config_dir, 'server_rsa.pub')
-        if not os.path.isfile(pem_path):
-            self.failures.append('missing RSA key file: ' + pem_path)
-            return None
-        with open(pem_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-        content = content.replace('-----BEGIN RSA PUBLIC KEY-----', '')
-        content = content.replace('-----END RSA PUBLIC KEY-----', '')
-        content = re.sub(r'\s+', '', content)
-        if not content:
-            self.failures.append('empty RSA key file: ' + pem_path)
-            return None
-        return content
-
     def substitute(self, text, old, new, what):
         if old not in text:
             return text, False
@@ -246,101 +234,7 @@ class Branding:
             return out if ok else text
         self.require(rel, transform, what)
 
-    def require_subst_all(self, rel, pairs, what):
-        def transform(text):
-            for old, new in pairs:
-                if old not in text:
-                    return text
-                text = text.replace(old, new)
-            return text
-        self.require(rel, transform, what)
-
     # ------- transforms -------
-
-    def apply_datacenter(self, rel_network, rel_mtdc, rel_enc, rel_account):
-        d = self.cfg['datacenter']
-        dc_id = str(d['id'])
-        ip = d['ip']
-        port = str(d['port'])
-        restrict = 'true' if d.get('restrict_to_tcp') else 'false'
-
-        seed_block_old = (
-            '            if testingEnvironment {\n'
-            '                seedAddressList = [\n'
-            '                    1: ["149.154.175.10"],\n'
-            '                    2: ["149.154.167.40"],\n'
-            '                    3: ["149.154.175.117"]\n'
-            '                ]\n'
-            '            } else {\n'
-            '                seedAddressList = [\n'
-            '                    1: ["149.154.175.50", "2001:b28:f23d:f001::a"],\n'
-            '                    2: ["149.154.167.50", "95.161.76.100", "2001:67c:4e8:f002::a"],\n'
-            '                    3: ["149.154.175.100", "2001:b28:f23d:f003::a"],\n'
-            '                    4: ["149.154.167.91", "2001:67c:4e8:f004::a"],\n'
-            '                    5: ["149.154.171.5", "2001:b28:f23f:f005::a"]\n'
-            '                ]\n'
-            '            }'
-        )
-        seed_block_new = (
-            '            seedAddressList = [\n'
-            '                ' + dc_id + ': ["' + ip + '"]\n'
-            '            ]'
-        )
-        addr_old = 'MTDatacenterAddress(ip: $0, port: 443, preferForMedia: false, restrictToTcp: false'
-        addr_new = 'MTDatacenterAddress(ip: $0, port: ' + port + ', preferForMedia: false, restrictToTcp: ' + restrict
-        self.require_subst_all(rel_network, [(seed_block_old, seed_block_new), (addr_old, addr_new)], 'Network.swift datacenter seed addresses')
-
-        key = self.rsa_key()
-        if key is None:
-            return
-        for rel in (rel_mtdc, rel_enc):
-            self.require(rel, lambda text, k=key: self.replace_rsa_blobs(text, k), 'RSA public key in ' + rel)
-
-        def account_transform(text):
-            # Upstream gates the datacenter by build flavor (#if DEBUG 1 / #else 2);
-            # the fork forces the custom datacenter unconditionally.
-            m = re.search(
-                r'(?m)^( {4,})#if DEBUG\n'
-                r'\1let initialDatacenterId: Int = \d+\n'
-                r'\1#else\n'
-                r'\1let initialDatacenterId: Int = \d+\n'
-                r'\1#endif\n',
-                text,
-            )
-            if m is None:
-                return text
-            pref = m.group(1)
-            block = pref + 'let initialDatacenterId: Int = ' + dc_id + '\n'
-            return text[:m.start()] + block + text[m.end():]
-        self.require(rel_account, account_transform, 'Account.swift initialDatacenterId block')
-
-    @staticmethod
-    def replace_rsa_blobs(text, key_b64):
-        lines = text.split('\n')
-        out = []
-        i = 0
-        replaced = 0
-        while i < len(lines):
-            line = lines[i]
-            if 'MIIB' in line and '\\n"' in line:
-                j = i
-                while j < len(lines) and 'AQAB' not in lines[j]:
-                    j += 1
-                if j >= len(lines):
-                    out.append(line)
-                    i += 1
-                    continue
-                indent = line[:len(line) - len(line.lstrip())]
-                for k in range(0, len(key_b64), WIDTH):
-                    out.append(indent + '"' + key_b64[k:k + WIDTH] + '\\n"')
-                i = j + 1
-                replaced += 1
-            else:
-                out.append(line)
-                i += 1
-        if replaced == 0:
-            return text
-        return '\n'.join(out)
 
     def apply_workarounds(self, rel_appdelegate, rel_buildconfig):
         w = self.cfg.get('workarounds', {})
@@ -857,12 +751,8 @@ def main(argv):
     root = argv[2] if len(argv) > 2 else os.getcwd()
     b = Branding(argv[1], root)
 
-    b.apply_datacenter(
-        'submodules/TelegramCore/Sources/Network/Network.swift',
-        'submodules/MtProtoKit/Sources/MTDatacenterAuthMessageService.m',
-        'submodules/MtProtoKit/Sources/MTEncryption.m',
-        'submodules/TelegramCore/Sources/Account/Account.swift',
-    )
+    # The datacenter / RSA server key are owned by build-system/polysrv now (run
+    # apply_polysrv.py after this script); only the branding cosmetics remain here.
     b.apply_appstore_config('build-system/appstore-configuration.json')
     b.apply_build('Telegram/BUILD')
     b.apply_url_handling('submodules/UrlHandling/Sources/UrlHandling.swift')

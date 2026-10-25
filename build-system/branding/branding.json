@@ -1,18 +1,11 @@
 {
     "general": {
-        "app_name": "Teleram",
-        "bundle_id": "ru.teleram.messenger",
-        "url_scheme": "teleram",
-        "url_scheme_short": "ram",
-        "app_specific_url_scheme": "ram",
-        "host": "teleram.ru"
-    },
-    "datacenter": {
-        "id": 2,
-        "debug_id": 1,
-        "ip": "178.22.53.96",
-        "port": 45789,
-        "restrict_to_tcp": true
+        "app_name": "PolySRV",
+        "bundle_id": "org.polysrv.messenger",
+        "url_scheme": "srv",
+        "url_scheme_short": "srv",
+        "app_specific_url_scheme": "srv",
+        "host": "polysrv.ru"
     },
     "appstore": {
         "is_appstore_build": "false",

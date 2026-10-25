@@ -1,21 +1,21 @@
 name: iOS build
 
-# Standalone build for the Teleram brand on Telegram-iOS 13.0.0.
+# Standalone build for the PolySRV brand on the Telegram-iOS tree.
 #
 # There is no tbuild-actions service behind this: the branch is a plain source
-# tree, upstream release plus one branding commit, and this workflow is the only
-# thing that builds it. Branding is applied at build time by
-# build-system/apply_branding.py, never committed into the tree, so the same
-# commit can be rebuilt for a different host by editing branding.json alone.
+# tree, upstream release plus the overlay pipeline, and this workflow is the only
+# thing that builds it. Branding and the multiserver code are applied at build
+# time by build-system/apply_branding.py and build-system/polysrv/apply_polysrv.py,
+# never committed into the tree, so the same commit can be rebuilt for a
+# different host by editing branding.json alone.
 #
-# The golden cache belongs to this branch alone. A 13.0.0 tree compiles under a
-# different Bazel than 12.9.2 did, so every action key differs and the 12.9.2
-# generation cannot serve a single action of it. The v13- key prefix keeps the
-# two generations unmistakably separate.
+# The golden cache belongs to this branch alone: a toolchain or tree bump changes
+# every action key, so an older generation cannot serve a single action of it. The
+# ios-polysrv- key prefix keeps generations unmistakably separate.
 on:
   push:
     branches:
-      - v13
+      - polysrv
   workflow_dispatch:
     inputs:
       # Restore both golden entries, report whether they arrived, empty the
@@ -47,7 +47,7 @@ permissions:
 # entry every build reads from, so a concurrent builder could restore a
 # generation that is being replaced underneath it.
 concurrency:
-  group: ios-v13-${{ github.repository }}
+  group: ios-polysrv-${{ github.repository }}
   cancel-in-progress: false
 
 env:
@@ -93,10 +93,9 @@ jobs:
           fetch-depth: "0"
           persist-credentials: false
 
-      # 13.0.0 pins a newer Xcode than 12.9.2 did. If the runner image does not
-      # carry it, say which versions it does carry instead of letting
-      # xcode-select fail with a bare "unable to get active developer
-      # directory".
+      # versions.json pins an Xcode. If the runner image does not carry it, say
+      # which versions it does carry instead of letting xcode-select fail with a
+      # bare "unable to get active developer directory".
       - name: Select pinned Xcode
         run: |
           set -euo pipefail
@@ -128,25 +127,25 @@ jobs:
       #
       # The key is derived from files that are byte-identical on every commit of
       # this branch, so all builds share one entry and a toolchain bump rotates
-      # it at once. The v13- prefix is what keeps this generation distinct from
-      # the 12.9.2 one, which a different Bazel cannot use at all.
+      # it at once. The ios-polysrv- prefix is what keeps this generation
+      # distinct from any older one a different Bazel cannot use at all.
       - name: Restore golden bazel disk cache
         id: restore-cas
         uses: actions/cache/restore@v4
         with:
           path: ${{ env.BAZEL_CACHE_DIR }}
-          key: ios-v13-golden-cas-${{ runner.os }}-${{ hashFiles('versions.json', '.bazelrc') }}
+          key: ios-polysrv-golden-cas-${{ runner.os }}-${{ hashFiles('versions.json', '.bazelrc') }}
           restore-keys: |
-            ios-v13-golden-cas-${{ runner.os }}-
+            ios-polysrv-golden-cas-${{ runner.os }}-
 
       - name: Restore golden external repository cache
         id: restore-repos
         uses: actions/cache/restore@v4
         with:
           path: ${{ env.REPO_CACHE_DIR }}
-          key: ios-v13-golden-repos-${{ runner.os }}-${{ hashFiles('versions.json', '.bazelrc') }}
+          key: ios-polysrv-golden-repos-${{ runner.os }}-${{ hashFiles('versions.json', '.bazelrc') }}
           restore-keys: |
-            ios-v13-golden-repos-${{ runner.os }}-
+            ios-polysrv-golden-repos-${{ runner.os }}-
 
       - name: Report restored cache content
         if: always()
@@ -186,6 +185,15 @@ jobs:
           set -euo pipefail
           cd "$SOURCE_DIR"
           python3 build-system/apply_branding.py build-system/branding/branding.json
+
+      # The multiserver overlay: new PolySRV sources plus the anchored edits that
+      # hook them into the network, the account and MtProtoKit. Fails loudly if an
+      # upstream anchor has moved, exactly like branding.
+      - name: Apply PolySRV multiserver overlay
+        run: |
+          set -euo pipefail
+          cd "$SOURCE_DIR"
+          python3 build-system/polysrv/apply_polysrv.py
 
       - name: Regenerate provisioning profiles
         run: |
@@ -514,7 +522,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ${{ env.BAZEL_CACHE_DIR }}
-          key: ios-v13-golden-cas-${{ runner.os }}-${{ hashFiles('versions.json', '.bazelrc') }}
+          key: ios-polysrv-golden-cas-${{ runner.os }}-${{ hashFiles('versions.json', '.bazelrc') }}
 
       - name: Save golden external repository cache
         if: always() && steps.compile.outcome == 'success'
@@ -522,7 +530,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ${{ env.REPO_CACHE_DIR }}
-          key: ios-v13-golden-repos-${{ runner.os }}-${{ hashFiles('versions.json', '.bazelrc') }}
+          key: ios-polysrv-golden-repos-${{ runner.os }}-${{ hashFiles('versions.json', '.bazelrc') }}
 
       # The explicit save steps above are the only thing in this workflow that
       # writes a cache entry. The quota is enforced here against STORED bytes,
@@ -535,8 +543,8 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
-          CURRENT_CAS: ios-v13-golden-cas-${{ runner.os }}-${{ hashFiles('versions.json', '.bazelrc') }}
-          CURRENT_REPOS: ios-v13-golden-repos-${{ runner.os }}-${{ hashFiles('versions.json', '.bazelrc') }}
+          CURRENT_CAS: ios-polysrv-golden-cas-${{ runner.os }}-${{ hashFiles('versions.json', '.bazelrc') }}
+          CURRENT_REPOS: ios-polysrv-golden-repos-${{ runner.os }}-${{ hashFiles('versions.json', '.bazelrc') }}
         run: |
           set -uo pipefail
           cas_kb=${{ steps.size.outputs.cas_kb || 0 }}
@@ -572,8 +580,8 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
-          CURRENT_CAS: ios-v13-golden-cas-${{ runner.os }}-${{ hashFiles('versions.json', '.bazelrc') }}
-          CURRENT_REPOS: ios-v13-golden-repos-${{ runner.os }}-${{ hashFiles('versions.json', '.bazelrc') }}
+          CURRENT_CAS: ios-polysrv-golden-cas-${{ runner.os }}-${{ hashFiles('versions.json', '.bazelrc') }}
+          CURRENT_REPOS: ios-polysrv-golden-repos-${{ runner.os }}-${{ hashFiles('versions.json', '.bazelrc') }}
         run: |
           set -uo pipefail
           gh api --paginate "repos/$GITHUB_REPOSITORY/actions/caches?per_page=100" > /tmp/caches.json
@@ -582,7 +590,7 @@ jobs:
           keep = {os.environ["CURRENT_CAS"], os.environ["CURRENT_REPOS"]}
           caches = json.load(open("/tmp/caches.json")).get("actions_caches", [])
           for c in caches:
-              if c["key"].startswith("ios-v13-golden-") and c["key"] not in keep:
+              if c["key"].startswith("ios-polysrv-golden-") and c["key"] not in keep:
                   print(c["id"])
           ' > /tmp/stale_ids
           while read -r id; do
@@ -606,17 +614,17 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ${{ env.BAZEL_CACHE_DIR }}
-          key: ios-v13-golden-cas-${{ runner.os }}-${{ hashFiles('versions.json', '.bazelrc') }}
+          key: ios-polysrv-golden-cas-${{ runner.os }}-${{ hashFiles('versions.json', '.bazelrc') }}
           restore-keys: |
-            ios-v13-golden-cas-${{ runner.os }}-
+            ios-polysrv-golden-cas-${{ runner.os }}-
 
       - name: Restore golden external repository cache
         uses: actions/cache/restore@v4
         with:
           path: ${{ env.REPO_CACHE_DIR }}
-          key: ios-v13-golden-repos-${{ runner.os }}-${{ hashFiles('versions.json', '.bazelrc') }}
+          key: ios-polysrv-golden-repos-${{ runner.os }}-${{ hashFiles('versions.json', '.bazelrc') }}
           restore-keys: |
-            ios-v13-golden-repos-${{ runner.os }}-
+            ios-polysrv-golden-repos-${{ runner.os }}-
 
       - name: Report and release
         if: always()

@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "updated": "2026-10-25T00:00:00Z",
+  "servers": [
+    {
+      "id": "telegram",
+      "name": "Telegram",
+      "description": "The official Telegram cloud. Built into the app; the published list carries only the additional servers.",
+      "isTelegram": true,
+      "isOfficial": true,
+      "multiDc": true,
+      "mainDcId": 2,
+      "restrictToTcp": false,
+      "rsaPublicKey": "",
+      "dc": []
+    }
+  ]
+}
