@@ -70,6 +70,31 @@ EDITS = [
             "            }\n"
         ),
     },
+    # PolySRV: a self-hosted server may not implement temporary (PFS) keys. With
+    # them on, the main session asks for an ephemeral key it can never bind and
+    # never sends the login request. Use the permanent key for a custom server.
+    {
+        "file": NETWORK_SWIFT,
+        "label": "Network.swift no temp keys for a custom server",
+        "old": (
+            "            let useTempAuthKeys: Bool = true\n"
+        ),
+        "new": (
+            "            // PolySRV: a self-hosted server may not implement temporary (PFS) keys, and\n"
+            "            // with them on the main session waits for an ephemeral key it can never bind.\n"
+            "            let useTempAuthKeys: Bool = (polySrvServer?.isTelegram ?? true)\n"
+        ),
+    },
+    {
+        "file": NETWORK_SWIFT,
+        "label": "Network.swift no temp key refresh for a custom server",
+        "old": (
+            "            context.refreshesTemporaryKeys = !supplementary\n"
+        ),
+        "new": (
+            "            context.refreshesTemporaryKeys = !supplementary && useTempAuthKeys\n"
+        ),
+    },
     # -- TelegramCore/Account.swift -------------------------------------------
     # A fresh account starts on the selected server's main datacenter.
     {
