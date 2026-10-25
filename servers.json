@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "updated": "2026-10-25T00:00:00Z",
+  "servers": [
+    {
+      "id": "polysrv-default",
+      "name": "PolySRV",
+      "description": "The PolySRV server.",
+      "host": "178.22.53.96",
+      "port": 45789,
+      "isOfficial": true,
+      "isTelegram": false,
+      "multiDc": false,
+      "mainDcId": 2,
+      "restrictToTcp": true,
+      "rsaPublicKey": "-----BEGIN RSA PUBLIC KEY-----\nMIIBCgKCAQEAtOq2wtlOI1CiqwNRbyLkbxqY8FZstUAdQ3UNbP37bIg0L1/W4vpa\nW07ODmdLB74LB2wJH4nYE1dA3YZS69m+tYgxQn6MKhImabAFKDSJOKGh2/bv6+xn\nlbtsPi5DrxWvjuR6r8Y4qxk5jjXDmump/myBv2DR8UJjeP0pp+8AA5/PTfgdMBAr\nW4cYDE4qPOHGUlMJejnZ9tmYkITnCtpF9yf0wQGysbAiCZW0tjvJJzvWVY92X2zw\n1guSlXCzDe8hhvW0/1Z3Lj0KuBiKp1bAbKmfn86VcPwDMMN4PU8P7YrAdVQkVIy6\n24fTvp1UqXLLOb0TnIIXV7TXncWG5VgOVQIDAQAB\n-----END RSA PUBLIC KEY-----"
+    },
+    {
+      "id": "polysrv-test-2",
+      "name": "PolySRV Test 2",
+      "description": "Second PolySRV test server.",
+      "host": "148.113.240.165",
+      "port": 6767,
+      "isOfficial": true,
+      "isTelegram": false,
+      "multiDc": false,
+      "mainDcId": 2,
+      "restrictToTcp": true,
+      "rsaPublicKey": "-----BEGIN RSA PUBLIC KEY-----\nMIIBCgKCAQEAreQd1lDnK825UQFN4Ey6W0okQ/GYHSOpJgzRMzfmswUTnkssu2+x\nps+aZz7STvv4gdkpPAWBbCz1jTovTa25A3xahkOFa8qUIk5C1ADvedkHcUPfSBmO\n86r8L09B9fkVLigW8tcByj1UKsfxO4KzAvLWBPyMhYP6bfORoBR+XPdgOyBNGu3R\nmHQXRkSC+m+78Du8+4XfQmP1VqR3chDlEEzTBn+fofYsdDp8gK2O0bvwTs30cdTN\nzN+mxMN7HcL3rdaH3j+g0W6CTfnz56PfjL+xQR3RNi2WjpNfccvamIwEBlX4f1mM\nKba/kBbgj83PIWR3v6MJUR/Cm7sR0ybYxQIDAQAB\n-----END RSA PUBLIC KEY-----"
+    }
+  ]
+}
