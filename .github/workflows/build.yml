@@ -289,6 +289,42 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      # Ship the dSYMs as an artifact (not the release) so any crash this build
+      # produces can be symbolicated. The Make.py build passes
+      # --apple_generate_dsym and --output_groups=+dsyms, so they exist under the
+      # last-build configuration bazel-bin points at.
+      - name: Collect dSYMs
+        if: always()
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          cd "$SOURCE_DIR"
+          STAGE="$RUNNER_TEMP/dsyms"
+          rm -rf "$STAGE"; mkdir -p "$STAGE"
+          collect() {
+            find "$1" -name '*.dSYM' -prune -print 2>/dev/null | while read -r d; do
+              cp -R "$d" "$STAGE"/ 2>/dev/null || true
+            done
+          }
+          collect bazel-bin
+          if [ -z "$(ls -A "$STAGE" 2>/dev/null)" ]; then
+            collect bazel-out
+          fi
+          echo "dSYM bundles collected: $(find "$STAGE" -maxdepth 1 -name '*.dSYM' | wc -l)"
+          ls "$STAGE" 2>/dev/null | head -40 || true
+          mkdir -p "$GITHUB_WORKSPACE/build/artifacts"
+          (cd "$STAGE" && zip -qry "$GITHUB_WORKSPACE/build/artifacts/dsyms.zip" .) || true
+
+      - name: Upload dSYMs
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.meta.outputs.artifact_name }}-dsyms
+          path: build/artifacts/dsyms.zip
+          if-no-files-found: warn
+          retention-days: 14
+
       # Best effort, and never fatal. Bazel already prints the whole breakdown
       # on one line at the end of every build, so this reads that line rather
       # than asking bazel to produce anything extra.

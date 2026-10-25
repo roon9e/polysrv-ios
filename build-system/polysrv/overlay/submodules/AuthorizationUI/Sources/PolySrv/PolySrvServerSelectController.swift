@@ -1,86 +1,133 @@
 import Foundation
 import UIKit
+import AsyncDisplayKit
+import Display
 import Network
 import TelegramCore
 import TelegramPresentationData
+
+/// The node hosts a plain `UITableView`. Display's controllers are node-based,
+/// so the table is wrapped rather than written as a node list: it is a small,
+/// self-contained screen and this keeps it obviously correct.
+private final class PolySrvServerSelectControllerNode: ASDisplayNode {
+    private let theme: PresentationTheme
+
+    let tableView: UITableView
+    let cancelButton: UIButton
+    private let header = UIView()
+    private let titleLabel = UILabel()
+
+    init(theme: PresentationTheme) {
+        self.theme = theme
+        self.tableView = UITableView(frame: .zero, style: .insetGrouped)
+        self.cancelButton = UIButton(type: .system)
+        super.init()
+    }
+
+    override func didLoad() {
+        super.didLoad()
+
+        self.view.backgroundColor = self.theme.list.plainBackgroundColor
+        self.header.backgroundColor = self.theme.list.plainBackgroundColor
+
+        self.titleLabel.text = "Servers"
+        self.titleLabel.font = UIFont.systemFont(ofSize: 17.0, weight: .semibold)
+        self.titleLabel.textColor = self.theme.list.itemPrimaryTextColor
+
+        self.cancelButton.setTitle("Cancel", for: .normal)
+        self.cancelButton.titleLabel?.font = UIFont.systemFont(ofSize: 17.0)
+
+        self.header.addSubview(self.titleLabel)
+        self.header.addSubview(self.cancelButton)
+        self.view.addSubview(self.header)
+
+        self.tableView.backgroundColor = self.theme.list.plainBackgroundColor
+        self.view.addSubview(self.tableView)
+    }
+
+    func updateLayout(size: CGSize, safeInsets: UIEdgeInsets) {
+        let barHeight: CGFloat = 44.0
+        let headerHeight = safeInsets.top + barHeight
+        self.header.frame = CGRect(x: 0.0, y: 0.0, width: size.width, height: headerHeight)
+
+        self.titleLabel.sizeToFit()
+        self.titleLabel.frame = CGRect(
+            x: floor((size.width - self.titleLabel.bounds.width) / 2.0),
+            y: safeInsets.top + floor((barHeight - self.titleLabel.bounds.height) / 2.0),
+            width: self.titleLabel.bounds.width,
+            height: self.titleLabel.bounds.height
+        )
+
+        self.cancelButton.sizeToFit()
+        self.cancelButton.frame = CGRect(
+            x: 16.0,
+            y: safeInsets.top + floor((barHeight - self.cancelButton.bounds.height) / 2.0),
+            width: self.cancelButton.bounds.width,
+            height: self.cancelButton.bounds.height
+        )
+
+        self.tableView.frame = CGRect(x: 0.0, y: headerHeight, width: size.width, height: max(0.0, size.height - headerHeight))
+    }
+}
 
 /// The pre-login server picker: one flat list in registry order (Telegram first,
 /// then the servers published on gh-pages), each row with a logo, its endpoint
 /// and a live TCP reachability check.
 ///
-/// Deliberately a plain `UITableView` rather than a Display node: it is a small,
-/// self-contained screen and standard UIKit is the least fragile way to build it.
-///
-/// The list is refreshed from the published `servers.json` when the screen
-/// appears, so a server added there shows up on a first build without shipping a
-/// new one. Selecting the official Telegram row binds the account to Telegram and
-/// stops the picker appearing again.
-public final class PolySrvServerSelectController: UIViewController, UITableViewDataSource, UITableViewDelegate {
+/// A Display `ViewController`, not a UIKit one: it is shown with
+/// `presentOverlay`, and Display's `NavigationController` deliberately traps on
+/// UIKit `present`. The list is refreshed from the published `servers.json` when
+/// the screen appears, so a server added there shows up on a first build without
+/// shipping a new one.
+public final class PolySrvServerSelectController: ViewController, UITableViewDataSource, UITableViewDelegate {
     private var servers: [PolySrvServer]
     private let theme: PresentationTheme
     private let onSelect: (PolySrvServer) -> Void
     private let onCancel: () -> Void
 
-    private let tableView = UITableView(frame: .zero, style: .insetGrouped)
-    private let loadingLabel = UILabel()
     private var statusByServerId: [String: String] = [:]
-    private var isLoadingRemote = false
+
+    private var controllerNode: PolySrvServerSelectControllerNode {
+        return self.displayNode as! PolySrvServerSelectControllerNode
+    }
 
     public init(servers: [PolySrvServer], theme: PresentationTheme, onSelect: @escaping (PolySrvServer) -> Void, onCancel: @escaping () -> Void) {
         self.servers = servers
         self.theme = theme
         self.onSelect = onSelect
         self.onCancel = onCancel
-        super.init(nibName: nil, bundle: nil)
+        super.init(navigationBarPresentationData: nil)
     }
 
     public required init(coder aDecoder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
 
-    public override func viewDidLoad() {
-        super.viewDidLoad()
+    public override func loadDisplayNode() {
+        let node = PolySrvServerSelectControllerNode(theme: self.theme)
+        node.tableView.dataSource = self
+        node.tableView.delegate = self
+        node.cancelButton.addTarget(self, action: #selector(self.cancelPressed), for: .touchUpInside)
+        self.displayNode = node
+        self.displayNodeDidLoad()
+    }
 
-        self.title = "Servers"
-        self.view.backgroundColor = self.theme.list.plainBackgroundColor
-        self.navigationItem.leftBarButtonItem = UIBarButtonItem(title: "Cancel", style: .plain, target: self, action: #selector(self.cancelPressed))
-
-        self.loadingLabel.text = "Loading servers…"
-        self.loadingLabel.font = UIFont.systemFont(ofSize: 14.0)
-        self.loadingLabel.textColor = self.theme.list.itemSecondaryTextColor
-        self.loadingLabel.textAlignment = .center
-        self.loadingLabel.frame = CGRect(x: 0.0, y: 0.0, width: self.view.bounds.width, height: 44.0)
-        self.loadingLabel.isHidden = true
-        self.tableView.tableFooterView = self.loadingLabel
-
-        self.tableView.dataSource = self
-        self.tableView.delegate = self
-        self.tableView.backgroundColor = self.theme.list.plainBackgroundColor
-        self.tableView.translatesAutoresizingMaskIntoConstraints = false
-        self.view.addSubview(self.tableView)
-        NSLayoutConstraint.activate([
-            self.tableView.leadingAnchor.constraint(equalTo: self.view.leadingAnchor),
-            self.tableView.trailingAnchor.constraint(equalTo: self.view.trailingAnchor),
-            self.tableView.topAnchor.constraint(equalTo: self.view.topAnchor),
-            self.tableView.bottomAnchor.constraint(equalTo: self.view.bottomAnchor),
-        ])
+    public override func containerLayoutUpdated(_ layout: ContainerViewLayout, transition: ContainedViewLayoutTransition) {
+        super.containerLayoutUpdated(layout, transition: transition)
+        self.controllerNode.updateLayout(size: layout.size, safeInsets: layout.safeInsets)
     }
 
     public override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
 
         // Pull the published list so servers that are not bundled appear.
-        self.isLoadingRemote = true
-        self.loadingLabel.isHidden = false
         PolySrvServers.shared.refreshRemote { [weak self] in
             DispatchQueue.main.async {
                 guard let self = self else {
                     return
                 }
-                self.isLoadingRemote = false
-                self.loadingLabel.isHidden = true
                 self.servers = PolySrvServers.shared.allServers()
-                self.tableView.reloadData()
+                self.controllerNode.tableView.reloadData()
                 for server in self.servers {
                     self.ping(server)
                 }
@@ -93,6 +140,7 @@ public final class PolySrvServerSelectController: UIViewController, UITableViewD
     }
 
     @objc private func cancelPressed() {
+        self.dismiss()
         self.onCancel()
     }
 
@@ -126,7 +174,9 @@ public final class PolySrvServerSelectController: UIViewController, UITableViewD
 
     public func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
-        self.onSelect(self.servers[indexPath.row])
+        let server = self.servers[indexPath.row]
+        self.dismiss()
+        self.onSelect(server)
     }
 
     // MARK: - Logos
@@ -197,7 +247,7 @@ public final class PolySrvServerSelectController: UIViewController, UITableViewD
                 }
                 self.statusByServerId[server.id] = ok ? "\(elapsed) ms" : "unreachable"
                 if let row = self.servers.firstIndex(where: { $0.id == server.id }) {
-                    self.tableView.reloadRows(at: [IndexPath(row: row, section: 0)], with: .none)
+                    self.controllerNode.tableView.reloadRows(at: [IndexPath(row: row, section: 0)], with: .none)
                 }
             }
         }
