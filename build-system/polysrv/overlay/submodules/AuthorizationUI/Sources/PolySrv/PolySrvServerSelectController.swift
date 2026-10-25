@@ -128,13 +128,13 @@ public final class PolySrvServerSelectController: ViewController, UITableViewDat
                 }
                 self.servers = PolySrvServers.shared.allServers()
                 self.controllerNode.tableView.reloadData()
-                for server in self.servers {
+                for server in self.servers where !server.isTelegram {
                     self.ping(server)
                 }
             }
         }
 
-        for server in self.servers {
+        for server in self.servers where !server.isTelegram {
             self.ping(server)
         }
     }
@@ -227,6 +227,10 @@ public final class PolySrvServerSelectController: ViewController, UITableViewDat
     // MARK: - Ping
 
     private func ping(_ server: PolySrvServer) {
+        // The official cloud is multi-DC with no single endpoint to probe.
+        if server.isTelegram {
+            return
+        }
         let start = Date()
         guard let port = NWEndpoint.Port(rawValue: UInt16(clamping: server.port)) else {
             return
