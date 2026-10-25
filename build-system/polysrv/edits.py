@@ -421,4 +421,28 @@ EDITS = [
             "                    var previousSplashController: AuthorizationSequenceSplashController?\n"
         ),
     },
+    # PolySRV: MTProto's logout check binds a temporary key to probe the permanent
+    # one. A self-hosted server that rejects that bind (it may not implement temp
+    # keys) is read as "the permanent key is gone", resetting the key in a loop —
+    # which is what the server logged as ENCRYPTED_MESSAGE_INVALID on the bind.
+    {
+        "file": CONTEXT_M,
+        "label": "MTContext.m skip the temp-key logout probe for a locked server",
+        "old": (
+            "- (void)checkIfLoggedOut:(NSInteger)datacenterId {\n"
+            "    [[MTContext contextQueue] dispatchOnQueue:^{\n"
+            "        MTDatacenterAuthInfo *authInfo = [self authInfoForDatacenterWithId:datacenterId selector:MTDatacenterAuthInfoSelectorPersistent];\n"
+        ),
+        "new": (
+            "- (void)checkIfLoggedOut:(NSInteger)datacenterId {\n"
+            "    if (_apiEnvironment.datacenterOptionsLocked) {\n"
+            "        // PolySRV: a self-hosted server may not support the temporary-key bind this\n"
+            "        // check makes, and a rejected bind would be read as the permanent key being\n"
+            "        // gone, resetting it in a loop. Skip the probe for a fixed server.\n"
+            "        return;\n"
+            "    }\n"
+            "    [[MTContext contextQueue] dispatchOnQueue:^{\n"
+            "        MTDatacenterAuthInfo *authInfo = [self authInfoForDatacenterWithId:datacenterId selector:MTDatacenterAuthInfoSelectorPersistent];\n"
+        ),
+    },
 ]
