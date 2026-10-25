@@ -364,7 +364,7 @@ EDITS = [
         "new": (
             "    private func polySrvProceedToLogin() {\n"
             "        let servers = PolySrvServers.shared.allServers()\n"
-            "        let picker = PolySrvServerSelectController(servers: servers, theme: self.presentationData.theme, onSelect: { [weak self] server in\n"
+            "        let picker = PolySrvServerSelectController(servers: servers, account: self.account, theme: self.presentationData.theme, onSelect: { [weak self] server in\n"
             "            guard let strongSelf = self else {\n"
             "                return\n"
             "            }\n"

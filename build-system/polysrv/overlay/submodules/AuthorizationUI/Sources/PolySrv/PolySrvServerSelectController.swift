@@ -3,6 +3,7 @@ import UIKit
 import AsyncDisplayKit
 import Display
 import Network
+import SwiftSignalKit
 import TelegramCore
 import TelegramPresentationData
 
@@ -16,6 +17,7 @@ private final class PolySrvServerSelectControllerNode: ASDisplayNode {
     let cancelButton: UIButton
     private let header = UIView()
     private let titleLabel = UILabel()
+    private let diagnosticLabel = UILabel()
 
     init(theme: PresentationTheme) {
         self.theme = theme
@@ -34,6 +36,11 @@ private final class PolySrvServerSelectControllerNode: ASDisplayNode {
         self.titleLabel.font = UIFont.systemFont(ofSize: 17.0, weight: .semibold)
         self.titleLabel.textColor = self.theme.list.itemPrimaryTextColor
 
+        self.diagnosticLabel.font = UIFont.monospacedSystemFont(ofSize: 11.0, weight: .regular)
+        self.diagnosticLabel.textColor = self.theme.list.itemSecondaryTextColor
+        self.diagnosticLabel.textAlignment = .center
+        self.diagnosticLabel.numberOfLines = 2
+
         self.cancelButton.setTitle("Cancel", for: .normal)
         self.cancelButton.titleLabel?.font = UIFont.systemFont(ofSize: 17.0)
 
@@ -45,9 +52,14 @@ private final class PolySrvServerSelectControllerNode: ASDisplayNode {
         self.view.addSubview(self.tableView)
     }
 
+    func setDiagnostic(_ text: String) {
+        self.diagnosticLabel.text = text
+    }
+
     func updateLayout(size: CGSize, safeInsets: UIEdgeInsets) {
         let barHeight: CGFloat = 44.0
-        let headerHeight = safeInsets.top + barHeight
+        let diagnosticHeight: CGFloat = self.diagnosticLabel.text?.isEmpty == false ? 30.0 : 0.0
+        let headerHeight = safeInsets.top + barHeight + diagnosticHeight
         self.header.frame = CGRect(x: 0.0, y: 0.0, width: size.width, height: headerHeight)
 
         self.titleLabel.sizeToFit()
@@ -66,6 +78,8 @@ private final class PolySrvServerSelectControllerNode: ASDisplayNode {
             height: self.cancelButton.bounds.height
         )
 
+        self.diagnosticLabel.frame = CGRect(x: 12.0, y: safeInsets.top + barHeight, width: size.width - 24.0, height: diagnosticHeight)
+
         self.tableView.frame = CGRect(x: 0.0, y: headerHeight, width: size.width, height: max(0.0, size.height - headerHeight))
     }
 }
@@ -81,18 +95,22 @@ private final class PolySrvServerSelectControllerNode: ASDisplayNode {
 /// shipping a new one.
 public final class PolySrvServerSelectController: ViewController, UITableViewDataSource, UITableViewDelegate {
     private var servers: [PolySrvServer]
+    private let account: UnauthorizedAccount?
     private let theme: PresentationTheme
     private let onSelect: (PolySrvServer) -> Void
     private let onCancel: () -> Void
 
     private var statusByServerId: [String: String] = [:]
+    private var diagnosticText: String = ""
+    private let statusDisposable = MetaDisposable()
 
     private var controllerNode: PolySrvServerSelectControllerNode {
         return self.displayNode as! PolySrvServerSelectControllerNode
     }
 
-    public init(servers: [PolySrvServer], theme: PresentationTheme, onSelect: @escaping (PolySrvServer) -> Void, onCancel: @escaping () -> Void) {
+    public init(servers: [PolySrvServer], account: UnauthorizedAccount?, theme: PresentationTheme, onSelect: @escaping (PolySrvServer) -> Void, onCancel: @escaping () -> Void) {
         self.servers = servers
+        self.account = account
         self.theme = theme
         self.onSelect = onSelect
         self.onCancel = onCancel
@@ -101,6 +119,10 @@ public final class PolySrvServerSelectController: ViewController, UITableViewDat
 
     public required init(coder aDecoder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    deinit {
+        self.statusDisposable.dispose()
     }
 
     public override func loadDisplayNode() {
@@ -120,6 +142,21 @@ public final class PolySrvServerSelectController: ViewController, UITableViewDat
     public override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
 
+        // A diagnostic readout of the account's current server and live network
+        // status: "net: connecting" forever means the transport/handshake never
+        // completes; "net: online" means it did and the failure is above it.
+        self.updateDiagnostic()
+
+        if let account = self.account {
+            self.statusDisposable.set((account.network.connectionStatus
+            |> deliverOnMainQueue).start(next: { [weak self] status in
+                guard let self = self else {
+                    return
+                }
+                self.updateDiagnostic(status: status)
+            }))
+        }
+
         // Pull the published list so servers that are not bundled appear.
         PolySrvServers.shared.refreshRemote { [weak self] in
             DispatchQueue.main.async {
@@ -136,6 +173,33 @@ public final class PolySrvServerSelectController: ViewController, UITableViewDat
 
         for server in self.servers where !server.isTelegram {
             self.ping(server)
+        }
+    }
+
+    private func updateDiagnostic(status: ConnectionStatus? = nil) {
+        var parts: [String] = []
+        if let account = self.account, let server = PolySrvServers.shared.server(forAccount: account.id) {
+            parts.append("\(server.id) · \(server.endpoint) · key \(server.rsaPublicKey.count) · \(server.multiDc ? "multi" : "locked")")
+        } else {
+            parts.append("no server bound")
+        }
+        if let status = status {
+            switch status {
+                case .waitingForNetwork:
+                    parts.append("net: waiting")
+                case .connecting:
+                    parts.append("net: connecting")
+                case .updating:
+                    parts.append("net: updating")
+                case .online:
+                    parts.append("net: online")
+            }
+        }
+        self.diagnosticText = parts.joined(separator: "\n")
+        self.controllerNode.setDiagnostic(self.diagnosticText)
+        self.controllerNode.tableView.reloadData()
+        if let layout = self.validLayout {
+            self.controllerNode.updateLayout(size: layout.size, safeInsets: layout.safeInsets)
         }
     }
 
