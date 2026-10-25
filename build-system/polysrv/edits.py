@@ -400,4 +400,25 @@ EDITS = [
             "    private func phoneEntryController(countryCode: Int32, number: String, splashController: AuthorizationSequenceSplashController?) -> AuthorizationSequencePhoneEntryController {\n"
         ),
     },
+    # PolySRV: keep the splash behind the phone entry so its navigation bar has a
+    # back button (the phone entry's backPressed returns to the splash). Without
+    # this a first-run user has no way back to reopen the picker and change servers.
+    {
+        "file": AUTH_SEQUENCE_SWIFT,
+        "label": "AuthorizationSequenceController.swift splash behind phone entry",
+        "old": (
+            "                case let .phoneEntry(countryCode, number):\n"
+            "                    var controllers: [ViewController] = []\n"
+            "                    if !self.otherAccountPhoneNumbers.1.isEmpty {\n"
+            "                        controllers.append(self.splashController())\n"
+            "                    }\n"
+            "                    var previousSplashController: AuthorizationSequenceSplashController?\n"
+        ),
+        "new": (
+            "                case let .phoneEntry(countryCode, number):\n"
+            "                    var controllers: [ViewController] = []\n"
+            "                    controllers.append(self.splashController())\n"
+            "                    var previousSplashController: AuthorizationSequenceSplashController?\n"
+        ),
+    },
 ]
