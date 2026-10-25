@@ -166,6 +166,17 @@ EDITS = [
     },
     {
         "file": AUTH_SERVICE_M,
+        "label": "MTDatacenterAuthMessageService.m import MTApiEnvironment",
+        "old": (
+            "#import <MtProtoKit/MTContext.h>\n"
+        ),
+        "new": (
+            "#import <MtProtoKit/MTContext.h>\n"
+            "#import <MtProtoKit/MTApiEnvironment.h>\n"
+        ),
+    },
+    {
+        "file": AUTH_SERVICE_M,
         "label": "MTDatacenterAuthMessageService.m custom server public key",
         "old": (
             "    } else {\n"
