@@ -95,7 +95,7 @@ public struct PolySrvServer: Codable, Equatable {
         case multiDc
         case mainDcId
         case restrictToTcp
-        case dc
+        case dataCenters = "dc"
     }
 
     public init(from decoder: Decoder) throws {
@@ -110,7 +110,7 @@ public struct PolySrvServer: Codable, Equatable {
         self.isOfficial = (try? c.decode(Bool.self, forKey: .isOfficial)) ?? false
         self.mainDcId = (try? c.decode(Int.self, forKey: .mainDcId)) ?? 2
         self.restrictToTcp = (try? c.decode(Bool.self, forKey: .restrictToTcp)) ?? false
-        let dataCenters = (try? c.decode([PolySrvServerDataCenter].self, forKey: .dc)) ?? []
+        let dataCenters = (try? c.decode([PolySrvServerDataCenter].self, forKey: .dataCenters)) ?? []
         self.dataCenters = dataCenters
         self.multiDc = (try? c.decode(Bool.self, forKey: .multiDc)) ?? !dataCenters.isEmpty
     }

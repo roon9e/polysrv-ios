@@ -249,6 +249,7 @@ jobs:
             --bazelUserRoot="$BAZEL_USER_ROOT" \
             --cacheDir="$BAZEL_CACHE_DIR" \
             build \
+            --continueOnError \
             --configurationPath=build-system/appstore-configuration.json \
             --codesigningInformationPath=build-system/fake-codesigning \
             --configuration=release_arm64 \

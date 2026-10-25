@@ -49,8 +49,8 @@ public final class PolySrvServers {
         defer { self.lock.unlock() }
 
         self.builtinServers = PolySrvServers.parseServers(Data(base64Encoded: polySrvDefaultServersJSONBase64))
-        if let cached = self.defaults.data(forKey: self.configKey), let servers = PolySrvServers.parseServers(cached), !servers.isEmpty {
-            self.remoteServers = servers
+        if let cached = self.defaults.data(forKey: self.configKey), !PolySrvServers.parseServers(cached).isEmpty {
+            self.remoteServers = PolySrvServers.parseServers(cached)
         } else {
             self.remoteServers = []
         }
@@ -224,7 +224,8 @@ public final class PolySrvServers {
             guard let self = self else {
                 return
             }
-            if let data = data, let servers = PolySrvServers.parseServers(data), !servers.isEmpty {
+            if let data = data, !PolySrvServers.parseServers(data).isEmpty {
+                let servers = PolySrvServers.parseServers(data)
                 self.lock.lock()
                 self.remoteServers = servers
                 self.lastRemoteFetch = Date()
