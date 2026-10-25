@@ -165,13 +165,13 @@ public final class PolySrvServerSelectController: ViewController, UITableViewDat
                 }
                 self.servers = PolySrvServers.shared.allServers()
                 self.controllerNode.tableView.reloadData()
-                for server in self.servers where !server.isTelegram {
+                for server in self.servers {
                     self.ping(server)
                 }
             }
         }
 
-        for server in self.servers where !server.isTelegram {
+        for server in self.servers {
             self.ping(server)
         }
     }
@@ -291,15 +291,23 @@ public final class PolySrvServerSelectController: ViewController, UITableViewDat
     // MARK: - Ping
 
     private func ping(_ server: PolySrvServer) {
-        // The official cloud is multi-DC with no single endpoint to probe.
+        // For the official cloud, probe a known datacenter so the row shows whether
+        // this device can reach Telegram at all (a system VPN may or may not route
+        // it); a custom server is probed at its own address.
+        let host: String
+        let port: Int
         if server.isTelegram {
-            return
+            host = "149.154.167.50"
+            port = 443
+        } else {
+            host = server.host
+            port = server.port
         }
         let start = Date()
-        guard let port = NWEndpoint.Port(rawValue: UInt16(clamping: server.port)) else {
+        guard let nwPort = NWEndpoint.Port(rawValue: UInt16(clamping: port)) else {
             return
         }
-        let connection = NWConnection(host: NWEndpoint.Host(server.host), port: port, using: .tcp)
+        let connection = NWConnection(host: NWEndpoint.Host(host), port: nwPort, using: .tcp)
         let queue = DispatchQueue(label: "polysrv.ping")
         var finished = false
         let finish: (Bool) -> Void = { [weak self] ok in
