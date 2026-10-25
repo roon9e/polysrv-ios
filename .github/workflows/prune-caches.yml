@@ -1,0 +1,70 @@
+name: Prune caches
+
+# Keeps one cache per prefix. GitHub caps a repository's Actions cache at 10 GiB
+# and evicts by last access, silently, so a superseded golden generation left
+# behind can push out the live one. This is the standing sweep; the golden job
+# also retires its own superseded entries inline when it seeds.
+#
+# Mirrors polysrv-desktop's prune-caches.yml.
+
+on:
+  workflow_call:
+    inputs:
+      prefixes:
+        description: Newline separated cache key prefixes to keep one of.
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      prefixes:
+        description: Newline separated cache key prefixes to keep one of.
+        required: false
+        type: string
+
+permissions:
+  actions: write
+
+concurrency:
+  group: prune-caches-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Prune superseded caches
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PREFIXES: ${{ inputs.prefixes }}
+        run: |
+          set -euo pipefail
+
+          prefixes="${PREFIXES:-}"
+          if [ -z "$(printf '%s' "$prefixes" | tr -d '[:space:]')" ]; then
+            prefixes=$(cat <<'EOF'
+          ios-polysrv-golden-cas-
+          ios-polysrv-golden-repos-
+          EOF
+          )
+          fi
+
+          gh api --paginate "repos/$GH_REPO/actions/caches?per_page=100" \
+            --jq '.actions_caches[] | [.id, .key, .created_at] | @tsv' > caches.tsv
+          echo "known caches: $(wc -l < caches.tsv)"
+
+          while IFS= read -r prefix; do
+            prefix="$(printf '%s' "$prefix" | tr -d '[:space:]')"
+            [ -n "$prefix" ] || continue
+            # Keep the newest of the prefix, delete the rest.
+            victims=$(awk -F'\t' -v p="$prefix" 'index($2, p) == 1 { print }' caches.tsv \
+              | sort -k3,3 | head -n -1 | cut -f1)
+            for id in $victims; do
+              echo "pruning $prefix: cache $id"
+              gh api -X DELETE "repos/$GH_REPO/actions/caches/$id"
+            done
+          done <<< "$prefixes"
+
+          gh api --paginate "repos/$GH_REPO/actions/caches?per_page=100" \
+            --jq '[.actions_caches[].size_in_bytes] | add // 0' > total.txt
+          echo "remaining cache total: $(cat total.txt) bytes"

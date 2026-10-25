@@ -79,7 +79,7 @@ jobs:
   # a cache entry.
   # ---------------------------------------------------------------------------
   build:
-    if: github.event_name != 'schedule' && !inputs.probe_only
+    if: github.event_name != 'schedule' && !inputs.probe_only && !inputs.seed_cache
     runs-on: xcode-27
     timeout-minutes: 240
     outputs:
@@ -643,3 +643,20 @@ jobs:
           for dir in "$BAZEL_CACHE_DIR" "$REPO_CACHE_DIR"; do
             [ -d "$dir" ] && rm -rf "${dir:?}"
           done
+
+  # ---------------------------------------------------------------------------
+  # Prune. Keeps one cache per prefix so superseded golden generations cannot
+  # push the repository over GitHub's 10 GiB Actions cache quota. Runs after the
+  # build on this branch; the golden job also retires its own superseded entries
+  # inline when it seeds, this is the standing sweep.
+  # ---------------------------------------------------------------------------
+  prune:
+    needs: [build, golden]
+    if: always()
+    permissions:
+      actions: write
+    uses: ./.github/workflows/prune-caches.yml
+    with:
+      prefixes: |
+        ios-polysrv-golden-cas-
+        ios-polysrv-golden-repos-
