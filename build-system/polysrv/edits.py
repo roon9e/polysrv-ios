@@ -19,6 +19,8 @@ AUTH_SERVICE_M = "submodules/MtProtoKit/Sources/MTDatacenterAuthMessageService.m
 CONTEXT_M = "submodules/MtProtoKit/Sources/MTContext.m"
 RUST_ENGINE_SWIFT = "submodules/MTProtoRustEngine/Sources/MTProtoRustEngine/RustNetworkEngine.swift"
 AUTH_SEQUENCE_SWIFT = "submodules/AuthorizationUI/Sources/AuthorizationSequenceController.swift"
+APP_DELEGATE_SWIFT = "submodules/TelegramUI/Sources/AppDelegate.swift"
+TELEGRAM_BUILD = "Telegram/BUILD"
 
 EDITS = [
     # -- TelegramCore/Network.swift -------------------------------------------
@@ -32,6 +34,10 @@ EDITS = [
         ),
         "new": (
             "            apiEnvironment.accessHostOverride = networkSettings?.backupHostOverride\n"
+            "            \n"
+            "            // PolySRV: force file logging so a connection problem can be read from the app's\n"
+            "            // Documents; a release build otherwise keeps it off.\n"
+            "            Logger.shared.logToFile = true\n"
             "            \n"
             "            // PolySRV: a non-Telegram account points every datacenter at its\n"
             "            // own server. The public key replaces the built-in one for non-CDN\n"
@@ -492,6 +498,44 @@ EDITS = [
             "                } else {\n"
             "                    strongSelf.polySrvProceedToLogin()\n"
             "                }\n"
+        ),
+    },
+    # PolySRV: put the app's logs in the app's own Documents so they can be pulled
+    # off the device with file sharing, when there is no Mac to read the console.
+    {
+        "file": APP_DELEGATE_SWIFT,
+        "label": "AppDelegate.swift log into Documents for retrieval",
+        "old": (
+            "        let logsPath = rootPath + \"/logs/app-logs\"\n"
+            "        let _ = try? FileManager.default.createDirectory(atPath: logsPath, withIntermediateDirectories: true, attributes: nil)\n"
+            "        Logger.setSharedLogger(Logger(rootPath: rootPath, basePath: logsPath))\n"
+        ),
+        "new": (
+            "        let logsPath = rootPath + \"/logs/app-logs\"\n"
+            "        let _ = try? FileManager.default.createDirectory(atPath: logsPath, withIntermediateDirectories: true, attributes: nil)\n"
+            "        var polySrvLogsPath = logsPath\n"
+            "        if let polySrvDocuments = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {\n"
+            "            let path = polySrvDocuments.path + \"/polysrv-logs\"\n"
+            "            let _ = try? FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true, attributes: nil)\n"
+            "            polySrvLogsPath = path\n"
+            "        }\n"
+            "        Logger.setSharedLogger(Logger(rootPath: rootPath, basePath: polySrvLogsPath))\n"
+        ),
+    },
+    # PolySRV: expose the app's Documents so the log above is reachable from the
+    # Files app / 3uTools on a device with no Mac.
+    {
+        "file": TELEGRAM_BUILD,
+        "label": "Telegram/BUILD enable file sharing",
+        "old": (
+            "    <key>UIFileSharingEnabled</key>\n"
+            "    <false/>\n"
+        ),
+        "new": (
+            "    <key>UIFileSharingEnabled</key>\n"
+            "    <true/>\n"
+            "    <key>LSSupportsOpeningDocumentsInPlace</key>\n"
+            "    <true/>\n"
         ),
     },
 ]
