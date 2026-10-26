@@ -95,6 +95,25 @@ EDITS = [
             "            context.refreshesTemporaryKeys = !supplementary && useTempAuthKeys\n"
         ),
     },
+    # PolySRV: use Network.framework for TCP. The bundled GCDAsyncSocket transport is
+    # what the client used by default, and it is the one path that does not connect
+    # where the picker's own NWConnection does; the network then uses the same
+    # transport as the picker. The WEB-proxy override below still wins.
+    {
+        "file": NETWORK_SWIFT,
+        "label": "Network.swift use Network.framework for TCP",
+        "old": (
+            "            let baseTcpConnectionInterfaceFactory = context.makeTcpConnectionInterface\n"
+        ),
+        "new": (
+            "            if #available(iOS 12.0, macOS 14.0, *) {\n"
+            "                context.makeTcpConnectionInterface = { delegate, delegateQueue in\n"
+            "                    return NetworkFrameworkTcpConnectionInterface(delegate: delegate, delegateQueue: delegateQueue)\n"
+            "                }\n"
+            "            }\n"
+            "            let baseTcpConnectionInterfaceFactory = context.makeTcpConnectionInterface\n"
+        ),
+    },
     # -- TelegramCore/Account.swift -------------------------------------------
     # A fresh account starts on the selected server's main datacenter.
     {

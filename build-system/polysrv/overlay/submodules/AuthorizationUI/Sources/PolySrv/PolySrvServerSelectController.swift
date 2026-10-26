@@ -217,7 +217,10 @@ public final class PolySrvServerSelectController: ViewController, UITableViewDat
     }
 
     public func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
-        return "Sign in to a server"
+        if self.diagnosticText.isEmpty {
+            return "Sign in to a server"
+        }
+        return "Sign in to a server\n" + self.diagnosticText
     }
 
     public func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
