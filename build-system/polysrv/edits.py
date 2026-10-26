@@ -373,7 +373,7 @@ EDITS = [
             "            guard let strongSelf = self else {\n"
             "                return\n"
             "            }\n"
-            "            strongSelf.polySrvSetPhoneEntryState()\n"
+            "            strongSelf.polySrvShowSplash()\n"
             "        })\n"
             "        self.presentOverlay(controller: picker, inGlobal: true, blockInteraction: true)\n"
             "    }\n"
@@ -395,6 +395,12 @@ EDITS = [
             "        let isTestingEnvironment = self.account.testingEnvironment\n"
             "        let countryCode = AuthorizationSequenceCountrySelectionController.defaultCountryCode()\n"
             "        let _ = self.engine.auth.setState(state: UnauthorizedAccountState(isTestingEnvironment: isTestingEnvironment, masterDatacenterId: masterDatacenterId, contents: .phoneEntry(countryCode: countryCode, number: \"\"))).startStandalone()\n"
+            "    }\n"
+            "    \n"
+            "    private func polySrvShowSplash() {\n"
+            "        let masterDatacenterId = self.account.masterDatacenterId\n"
+            "        let isTestingEnvironment = self.account.testingEnvironment\n"
+            "        let _ = self.engine.auth.setState(state: UnauthorizedAccountState(isTestingEnvironment: isTestingEnvironment, masterDatacenterId: masterDatacenterId, contents: .empty)).startStandalone()\n"
             "    }\n"
             "    \n"
             "    private func phoneEntryController(countryCode: Int32, number: String, splashController: AuthorizationSequenceSplashController?) -> AuthorizationSequencePhoneEntryController {\n"
@@ -443,6 +449,30 @@ EDITS = [
             "    }\n"
             "    [[MTContext contextQueue] dispatchOnQueue:^{\n"
             "        MTDatacenterAuthInfo *authInfo = [self authInfoForDatacenterWithId:datacenterId selector:MTDatacenterAuthInfoSelectorPersistent];\n"
+        ),
+    },
+    # PolySRV: the phone entry's back button returns to the server picker (so a
+    # different server can be chosen), not to the splash.
+    {
+        "file": AUTH_SEQUENCE_SWIFT,
+        "label": "AuthorizationSequenceController.swift phone entry back returns to the picker",
+        "old": (
+            "                if !strongSelf.otherAccountPhoneNumbers.1.isEmpty {\n"
+            "                    let _ = (strongSelf.sharedContext.accountManager.transaction { transaction -> Void in\n"
+            "                        transaction.removeAuth()\n"
+            "                    }).startStandalone()\n"
+            "                } else {\n"
+            "                    let _ = strongSelf.engine.auth.setState(state: UnauthorizedAccountState(isTestingEnvironment: strongSelf.account.testingEnvironment, masterDatacenterId: strongSelf.account.masterDatacenterId, contents: .empty)).startStandalone()\n"
+            "                }\n"
+        ),
+        "new": (
+            "                if !strongSelf.otherAccountPhoneNumbers.1.isEmpty {\n"
+            "                    let _ = (strongSelf.sharedContext.accountManager.transaction { transaction -> Void in\n"
+            "                        transaction.removeAuth()\n"
+            "                    }).startStandalone()\n"
+            "                } else {\n"
+            "                    strongSelf.polySrvProceedToLogin()\n"
+            "                }\n"
         ),
     },
 ]
