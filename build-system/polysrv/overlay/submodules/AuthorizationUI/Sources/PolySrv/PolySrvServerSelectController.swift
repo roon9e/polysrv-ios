@@ -102,6 +102,7 @@ public final class PolySrvServerSelectController: ViewController, UITableViewDat
 
     private var statusByServerId: [String: String] = [:]
     private var diagnosticText: String = ""
+    private var validLayout: ContainerViewLayout?
     private let statusDisposable = MetaDisposable()
 
     private var controllerNode: PolySrvServerSelectControllerNode {
@@ -136,6 +137,7 @@ public final class PolySrvServerSelectController: ViewController, UITableViewDat
 
     public override func containerLayoutUpdated(_ layout: ContainerViewLayout, transition: ContainedViewLayoutTransition) {
         super.containerLayoutUpdated(layout, transition: transition)
+        self.validLayout = layout
         self.controllerNode.updateLayout(size: layout.size, safeInsets: layout.safeInsets)
     }
 
