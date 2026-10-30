@@ -19,7 +19,8 @@ private final class PolySrvAccountsControllerNode: ASDisplayNode {
     let tableView: UITableView
     private let header = UIView()
     private let titleLabel = UILabel()
-    private let closeButton = UIButton(type: .system)
+    // Reached by the controller to wire up its action, so not private.
+    let closeButton = UIButton(type: .system)
 
     init(theme: PresentationTheme) {
         self.theme = theme
