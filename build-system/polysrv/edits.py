@@ -20,6 +20,7 @@ CONTEXT_M = "submodules/MtProtoKit/Sources/MTContext.m"
 RUST_ENGINE_SWIFT = "submodules/MTProtoRustEngine/Sources/MTProtoRustEngine/RustNetworkEngine.swift"
 AUTH_SEQUENCE_SWIFT = "submodules/AuthorizationUI/Sources/AuthorizationSequenceController.swift"
 APP_DELEGATE_SWIFT = "submodules/TelegramUI/Sources/AppDelegate.swift"
+SHARED_ACCOUNT_CONTEXT_SWIFT = "submodules/TelegramUI/Sources/SharedAccountContext.swift"
 TELEGRAM_BUILD = "Telegram/BUILD"
 
 EDITS = [
@@ -44,6 +45,11 @@ EDITS = [
             "            // datacenters, and a single-machine server locks its endpoints so\n"
             "            // help.getConfig cannot rewrite them.\n"
             "            let polySrvServer = PolySrvServers.shared.server(forAccount: accountId)\n"
+            "            // PolySRV: a server chosen before the account existed (the picker that\n"
+            "            // precedes adding one) is bound to it on its first network, so the\n"
+            "            // choice sticks to that account and the pending value is never handed\n"
+            "            // to another account that has no binding of its own.\n"
+            "            PolySrvServers.shared.bindPendingIfNeeded(forAccount: accountId)\n"
             "            if let polySrvServer = polySrvServer, !polySrvServer.isTelegram {\n"
             "                apiEnvironment.customServerPublicKey = polySrvServer.rsaPublicKey.isEmpty ? nil : polySrvServer.rsaPublicKey\n"
             "                apiEnvironment.datacenterOptionsLocked = !polySrvServer.multiDc\n"
@@ -590,6 +596,72 @@ EDITS = [
             "    <true/>\n"
             "    <key>LSSupportsOpeningDocumentsInPlace</key>\n"
             "    <true/>\n"
+        ),
+    },
+    # PolySRV: adding an account starts on the server picker, so the new account
+    # is created already bound to the chosen server. Without this the auth
+    # sequence sends an additional account straight to phone entry (its `.empty`
+    # state, with otherAccountPhoneNumbers non-empty, skips the splash where the
+    # picker lives) and the account silently lands on the official cloud.
+    #
+    # Only when a primary account already exists: the first run has no account
+    # and nothing to present over, and its own auth sequence offers the picker
+    # from the splash.
+    {
+        "file": SHARED_ACCOUNT_CONTEXT_SWIFT,
+        "label": "SharedAccountContext.swift new-account server picker",
+        "old": (
+            "    public func beginNewAuth(testingEnvironment: Bool) {\n"
+            "        let _ = self.accountManager.transaction({ transaction -> Void in\n"
+            "            let _ = transaction.createAuth([.environment(AccountEnvironmentAttribute(environment: testingEnvironment ? .test : .production))])\n"
+            "        }).start()\n"
+            "    }\n"
+        ),
+        "new": (
+            "    public func beginNewAuth(testingEnvironment: Bool) {\n"
+            "        if let activeAccounts = self.activeAccountsValue, activeAccounts.primary != nil {\n"
+            "            self.polySrvPickServerForNewAuth(testingEnvironment: testingEnvironment)\n"
+            "            return\n"
+            "        }\n"
+            "        self.polySrvCreateAuth(testingEnvironment: testingEnvironment)\n"
+            "    }\n"
+            "    \n"
+            "    // PolySRV: the pending selection this records is consumed by the new\n"
+            "    // account's first network (PolySrvServers.bindPendingIfNeeded), so the\n"
+            "    // account is born on the chosen server and never falls back to the\n"
+            "    // official cloud silently.\n"
+            "    private func polySrvPickServerForNewAuth(testingEnvironment: Bool) {\n"
+            "        let theme = self.currentPresentationData.with { $0 }.theme\n"
+            "        let picker = PolySrvServerSelectController(servers: PolySrvServers.shared.allServers(), account: nil, theme: theme, onSelect: { [weak self] server in\n"
+            "            guard let self = self else {\n"
+            "                return\n"
+            "            }\n"
+            "            PolySrvServers.shared.selectedServerIdForNextAccount = server.id\n"
+            "            Logger.shared.log(\"PolySRV\", \"new account on server \\(server.id) (\\(server.endpoint))\")\n"
+            "            self.polySrvCreateAuth(testingEnvironment: testingEnvironment)\n"
+            "        }, onCancel: {\n"
+            "        })\n"
+            "        (self.mainWindow?.viewController as? NavigationController)?.presentOverlay(controller: picker, inGlobal: true, blockInteraction: true)\n"
+            "    }\n"
+            "    \n"
+            "    private func polySrvCreateAuth(testingEnvironment: Bool) {\n"
+            "        let _ = self.accountManager.transaction({ transaction -> Void in\n"
+            "            let _ = transaction.createAuth([.environment(AccountEnvironmentAttribute(environment: testingEnvironment ? .test : .production))])\n"
+            "        }).start()\n"
+            "    }\n"
+        ),
+    },
+    {
+        "file": SHARED_ACCOUNT_CONTEXT_SWIFT,
+        "label": "SharedAccountContext.swift import AuthorizationUI",
+        "old": (
+            "import PeerInfoUI\n"
+            "import SettingsUI\n"
+        ),
+        "new": (
+            "import PeerInfoUI\n"
+            "import SettingsUI\n"
+            "import AuthorizationUI\n"
         ),
     },
 ]

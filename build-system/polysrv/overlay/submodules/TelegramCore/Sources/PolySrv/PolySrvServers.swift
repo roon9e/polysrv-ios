@@ -155,6 +155,24 @@ public final class PolySrvServers {
         self.lock.unlock()
     }
 
+    /// Bind the pending selection to an account that has no binding yet, and
+    /// clear it, so a server chosen before the account was created sticks to
+    /// exactly one account. Called when a network is built for the account:
+    /// until this runs, `server(forAccount:)` would hand the pending value to
+    /// every account that has no binding of its own.
+    public func bindPendingIfNeeded(forAccount accountId: AccountRecordId) {
+        self.lock.lock()
+        guard self.bindings[self.accountKey(accountId)] == nil, let pending = self.pendingServerId else {
+            self.lock.unlock()
+            return
+        }
+        self.bindings[self.accountKey(accountId)] = pending
+        self.pendingServerId = nil
+        self.defaults.set(try? JSONEncoder().encode(self.bindings), forKey: self.bindingsKey)
+        self.defaults.removeObject(forKey: self.pendingKey)
+        self.lock.unlock()
+    }
+
     /// The `host:port` the account's network was last built against, or nil
     /// before its first network. A network that finds a different scope must
     /// drop the previous server's persisted datacenter state.
