@@ -20,7 +20,8 @@ upstream release never conflicts with it.
     registry (`PolySrvServer`, `PolySrvServers`, `PolySrvRemote`).
   - `submodules/TelegramCore/Tests/PolySrv/` — the registry's unit tests (picked
     up by the existing `//submodules/TelegramCore:TelegramCoreTests`).
-  - `submodules/AuthorizationUI/Sources/PolySrv/` — the pre-login server picker.
+  - `submodules/AuthorizationUI/Sources/PolySrv/` — the server picker and the
+    add/edit form it presents.
   - `PolySrvDefaultServers.swift` is generated from `servers.json` by
     `apply_polysrv.py` (base64-embedded), never edited by hand.
 
@@ -38,6 +39,22 @@ overwrites `api_id`/`api_hash` in `build-system/appstore-configuration.json` fro
 the `TELEGRAM_API_ID` / `TELEGRAM_API_HASH` repository secrets in the build's copy
 of the tree (the committed values stay Telegram's public ones). The credentials
 are still compiled into the IPA, so a published IPA contains them.
+
+## The server picker
+
+The picker lists the official cloud, the servers the user added (`Your servers`)
+and the ones published on gh-pages (`Published`). The published ones are
+read-only; a custom one can be edited or deleted by swiping its row, and the
+last row of `Your servers` adds one. The add/edit form (`PolySrvServerEditController`)
+carries desktop's field set — name, description, address, port, main datacenter,
+RSA key, multi-datacenter — and refuses to change a server's address or key while
+an account is bound to it, because that account kept keys made for the old one.
+
+Deleting logs the accounts bound to that server out first (`accountsBound(toScope:)`),
+so a deleted server cannot leave an account pointing at nothing; the picker takes
+that as an environment from whoever presents it, since only the presenter has the
+account manager. An account holds `min(premiumCount + 20, 50)` servers, desktop's
+cap, not the official cloud's 3-or-4.
 
 ## The golden build cache
 
@@ -106,6 +123,8 @@ needs rebuilding.
 
 ## Not in this milestone
 
-Adding/editing servers from the UI, per-account identity scoping on the same
-numeric id across two servers, account-switcher grouping, `srv://` inbound links,
-and remote polling of `servers.json`.
+Per-account identity scoping on the same numeric id across two servers,
+account-switcher grouping, `srv://` inbound links, and remote polling of
+`servers.json`. A server logo picker is also still open: the model and the store
+already carry `logoPath` (and the picker shows it when a file exists), so only
+the choosing UI is missing.

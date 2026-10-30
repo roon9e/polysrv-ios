@@ -7,6 +7,21 @@ import SwiftSignalKit
 import TelegramCore
 import TelegramPresentationData
 
+/// What the picker needs from whoever presents it, because a deletion has to log
+/// out the accounts that are bound to the server being deleted and that is a
+/// decision only the presenter can take.
+public struct PolySrvServerPickerEnvironment {
+    /// Ask the user to confirm, running `action` if they do.
+    public let confirmDeletion: (String, @escaping () -> Void) -> Void
+    /// Log an account out, so its server can be removed.
+    public let logOut: (AccountRecordId) -> Void
+
+    public init(confirmDeletion: @escaping (String, @escaping () -> Void) -> Void, logOut: @escaping (AccountRecordId) -> Void) {
+        self.confirmDeletion = confirmDeletion
+        self.logOut = logOut
+    }
+}
+
 /// The node hosts a plain `UITableView`. Display's controllers are node-based,
 /// so the table is wrapped rather than written as a node list: it is a small,
 /// self-contained screen and this keeps it obviously correct.
@@ -14,16 +29,20 @@ private final class PolySrvServerSelectControllerNode: ASDisplayNode {
     private let theme: PresentationTheme
 
     let tableView: UITableView
-    let cancelButton: UIButton
+    let leftButton: UIButton
+    let addButton: UIButton
     private let header = UIView()
     private let titleLabel = UILabel()
     private let diagnosticLabel = UILabel()
 
-    init(theme: PresentationTheme) {
+    init(theme: PresentationTheme, leftButtonTitle: String) {
         self.theme = theme
         self.tableView = UITableView(frame: .zero, style: .insetGrouped)
-        self.cancelButton = UIButton(type: .system)
+        self.leftButton = UIButton(type: .system)
+        self.addButton = UIButton(type: .system)
         super.init()
+        self.leftButton.setTitle(leftButtonTitle, for: .normal)
+        self.addButton.setTitle("Add", for: .normal)
     }
 
     override func didLoad() {
@@ -41,11 +60,13 @@ private final class PolySrvServerSelectControllerNode: ASDisplayNode {
         self.diagnosticLabel.textAlignment = .center
         self.diagnosticLabel.numberOfLines = 2
 
-        self.cancelButton.setTitle("Cancel", for: .normal)
-        self.cancelButton.titleLabel?.font = UIFont.systemFont(ofSize: 17.0)
+        self.leftButton.titleLabel?.font = UIFont.systemFont(ofSize: 17.0)
+        self.addButton.titleLabel?.font = UIFont.systemFont(ofSize: 17.0)
 
         self.header.addSubview(self.titleLabel)
-        self.header.addSubview(self.cancelButton)
+        self.header.addSubview(self.leftButton)
+        self.header.addSubview(self.addButton)
+        self.header.addSubview(self.diagnosticLabel)
         self.view.addSubview(self.header)
 
         self.tableView.backgroundColor = self.theme.list.plainBackgroundColor
@@ -58,7 +79,7 @@ private final class PolySrvServerSelectControllerNode: ASDisplayNode {
 
     func updateLayout(size: CGSize, safeInsets: UIEdgeInsets) {
         let barHeight: CGFloat = 44.0
-        let diagnosticHeight: CGFloat = self.diagnosticLabel.text?.isEmpty == false ? 30.0 : 0.0
+        let diagnosticHeight: CGFloat = self.diagnosticLabel.text?.isEmpty == false ? 28.0 : 0.0
         let headerHeight = safeInsets.top + barHeight + diagnosticHeight
         self.header.frame = CGRect(x: 0.0, y: 0.0, width: size.width, height: headerHeight)
 
@@ -70,12 +91,20 @@ private final class PolySrvServerSelectControllerNode: ASDisplayNode {
             height: self.titleLabel.bounds.height
         )
 
-        self.cancelButton.sizeToFit()
-        self.cancelButton.frame = CGRect(
+        self.leftButton.sizeToFit()
+        self.leftButton.frame = CGRect(
             x: 16.0,
-            y: safeInsets.top + floor((barHeight - self.cancelButton.bounds.height) / 2.0),
-            width: self.cancelButton.bounds.width,
-            height: self.cancelButton.bounds.height
+            y: safeInsets.top + floor((barHeight - self.leftButton.bounds.height) / 2.0),
+            width: self.leftButton.bounds.width,
+            height: self.leftButton.bounds.height
+        )
+
+        self.addButton.sizeToFit()
+        self.addButton.frame = CGRect(
+            x: size.width - self.addButton.bounds.width - 16.0,
+            y: safeInsets.top + floor((barHeight - self.addButton.bounds.height) / 2.0),
+            width: self.addButton.bounds.width,
+            height: self.addButton.bounds.height
         )
 
         self.diagnosticLabel.frame = CGRect(x: 12.0, y: safeInsets.top + barHeight, width: size.width - 24.0, height: diagnosticHeight)
@@ -84,9 +113,10 @@ private final class PolySrvServerSelectControllerNode: ASDisplayNode {
     }
 }
 
-/// The pre-login server picker: one flat list in registry order (Telegram first,
-/// then the servers published on gh-pages), each row with a logo, its endpoint
-/// and a live TCP reachability check.
+/// The server picker: the official cloud, the servers the user added, and the
+/// servers published on gh-pages, each row with its own image, its endpoint and
+/// a live TCP reachability check. The published ones are read-only; the user's
+/// own can be edited and deleted in place.
 ///
 /// A Display `ViewController`, not a UIKit one: it is shown with
 /// `presentOverlay`, and Display's `NavigationController` deliberately traps on
@@ -94,12 +124,21 @@ private final class PolySrvServerSelectControllerNode: ASDisplayNode {
 /// the screen appears, so a server added there shows up on a first build without
 /// shipping a new one.
 public final class PolySrvServerSelectController: ViewController, UITableViewDataSource, UITableViewDelegate {
+    private enum Section: Int, CaseIterable, Equatable {
+        case telegram
+        case custom
+        case published
+    }
+
     private var servers: [PolySrvServer]
     private let account: UnauthorizedAccount?
     private let theme: PresentationTheme
+    private let environment: PolySrvServerPickerEnvironment?
     private let onSelect: (PolySrvServer) -> Void
     private let onCancel: () -> Void
+    private let leftButtonTitle: String
 
+    private var visibleSections: [Section] = [.telegram, .custom]
     private var statusByServerId: [String: String] = [:]
     private var diagnosticText: String = ""
     private var validLayout: ContainerViewLayout?
@@ -109,12 +148,14 @@ public final class PolySrvServerSelectController: ViewController, UITableViewDat
         return self.displayNode as! PolySrvServerSelectControllerNode
     }
 
-    public init(servers: [PolySrvServer], account: UnauthorizedAccount?, theme: PresentationTheme, onSelect: @escaping (PolySrvServer) -> Void, onCancel: @escaping () -> Void) {
+    public init(servers: [PolySrvServer], account: UnauthorizedAccount?, theme: PresentationTheme, leftButtonTitle: String = "Cancel", environment: PolySrvServerPickerEnvironment? = nil, onSelect: @escaping (PolySrvServer) -> Void, onCancel: @escaping () -> Void) {
         self.servers = servers
         self.account = account
         self.theme = theme
+        self.environment = environment
         self.onSelect = onSelect
         self.onCancel = onCancel
+        self.leftButtonTitle = leftButtonTitle
         super.init(navigationBarPresentationData: nil)
     }
 
@@ -127,10 +168,11 @@ public final class PolySrvServerSelectController: ViewController, UITableViewDat
     }
 
     public override func loadDisplayNode() {
-        let node = PolySrvServerSelectControllerNode(theme: self.theme)
+        let node = PolySrvServerSelectControllerNode(theme: self.theme, leftButtonTitle: self.leftButtonTitle)
         node.tableView.dataSource = self
         node.tableView.delegate = self
-        node.cancelButton.addTarget(self, action: #selector(self.cancelPressed), for: .touchUpInside)
+        node.leftButton.addTarget(self, action: #selector(self.leftPressed), for: .touchUpInside)
+        node.addButton.addTarget(self, action: #selector(self.addPressed), for: .touchUpInside)
         self.displayNode = node
         self.displayNodeDidLoad()
     }
@@ -144,9 +186,7 @@ public final class PolySrvServerSelectController: ViewController, UITableViewDat
     public override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
 
-        // A diagnostic readout of the account's current server and live network
-        // status: "net: connecting" forever means the transport/handshake never
-        // completes; "net: online" means it did and the failure is above it.
+        self.reloadServers()
         self.updateDiagnostic()
 
         if let account = self.account {
@@ -159,22 +199,62 @@ public final class PolySrvServerSelectController: ViewController, UITableViewDat
             }))
         }
 
-        // Pull the published list so servers that are not bundled appear.
+        // Pull the published list so servers that are not bundled appear, and so
+        // ones that were withdrawn disappear.
         PolySrvServers.shared.refreshRemote { [weak self] in
             DispatchQueue.main.async {
                 guard let self = self else {
                     return
                 }
-                self.servers = PolySrvServers.shared.allServers()
-                self.controllerNode.tableView.reloadData()
-                for server in self.servers {
-                    self.ping(server)
-                }
+                self.reloadServers()
+                self.pingAll()
             }
         }
 
+        self.pingAll()
+    }
+
+    // MARK: - List
+
+    private func reloadServers() {
+        self.servers = PolySrvServers.shared.allServers()
+        self.visibleSections = [.telegram, .custom] + (self.publishedServers.isEmpty ? [] : [.published])
+        self.controllerNode.tableView.reloadData()
+    }
+
+    private func pingAll() {
         for server in self.servers {
             self.ping(server)
+        }
+    }
+
+    private var telegramServer: PolySrvServer? {
+        return self.servers.first(where: { $0.isTelegram })
+    }
+
+    private var customServers: [PolySrvServer] {
+        return self.servers.filter { PolySrvServers.shared.isCustomServer($0.id) }
+    }
+
+    /// Published but not the official cloud and not the user's own; a server the
+    /// list dropped while an account used it shows up here too, marked.
+    private var publishedServers: [PolySrvServer] {
+        return self.servers.filter { !$0.isTelegram && !PolySrvServers.shared.isCustomServer($0.id) }
+    }
+
+    private func server(at indexPath: IndexPath) -> PolySrvServer? {
+        guard indexPath.section < self.visibleSections.count else {
+            return nil
+        }
+        switch self.visibleSections[indexPath.section] {
+            case .telegram:
+                return self.telegramServer
+            case .custom:
+                let servers = self.customServers
+                return indexPath.row < servers.count ? servers[indexPath.row] : nil
+            case .published:
+                let servers = self.publishedServers
+                return indexPath.row < servers.count ? servers[indexPath.row] : nil
         }
     }
 
@@ -199,53 +279,161 @@ public final class PolySrvServerSelectController: ViewController, UITableViewDat
         }
         self.diagnosticText = parts.joined(separator: "\n")
         self.controllerNode.setDiagnostic(self.diagnosticText)
-        self.controllerNode.tableView.reloadData()
         if let layout = self.validLayout {
             self.controllerNode.updateLayout(size: layout.size, safeInsets: layout.safeInsets)
         }
     }
 
-    @objc private func cancelPressed() {
+    // MARK: - Actions
+
+    @objc private func leftPressed() {
         self.dismiss()
         self.onCancel()
     }
 
+    @objc private func addPressed() {
+        self.presentEdit(server: nil)
+    }
+
+    private func select(_ server: PolySrvServer) {
+        self.dismiss()
+        self.onSelect(server)
+    }
+
+    private func presentEdit(server: PolySrvServer?) {
+        let controller = PolySrvServerEditController(server: server, theme: self.theme, completion: { [weak self] _ in
+            guard let self = self else {
+                return
+            }
+            self.reloadServers()
+            self.pingAll()
+        })
+        self.present(controller, in: .window(.root))
+    }
+
+    private func delete(_ server: PolySrvServer) {
+        let scope = PolySrvServers.scope(for: server)
+        let bound = PolySrvServers.shared.accountsBound(toScope: scope)
+
+        let performDeletion: () -> Void = { [weak self] in
+            guard let self = self else {
+                return
+            }
+            for accountId in bound {
+                self.environment?.logOut(accountId)
+                PolySrvServers.shared.clearServer(forAccount: accountId)
+            }
+            PolySrvServers.shared.removeCustomServer(id: server.id)
+            self.reloadServers()
+        }
+
+        if let environment = self.environment, !bound.isEmpty {
+            let noun = bound.count == 1 ? "account" : "accounts"
+            environment.confirmDeletion("Delete \(server.name)? \(bound.count) \(noun) signed in to it will be logged out.", performDeletion)
+        } else if self.environment == nil, !bound.isEmpty {
+            // No way to log the accounts out: refuse rather than delete a server
+            // an account is still pointed at.
+            Logger.shared.log("PolySRV", "refusing to delete \(server.id): \(bound.count) account(s) bound and no environment to log them out")
+            return
+        } else {
+            performDeletion()
+        }
+    }
+
     // MARK: - Table
 
+    public func numberOfSections(in tableView: UITableView) -> Int {
+        return self.visibleSections.count
+    }
+
     public func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        return self.servers.count
+        guard section < self.visibleSections.count else {
+            return 0
+        }
+        switch self.visibleSections[section] {
+            case .telegram:
+                return self.telegramServer == nil ? 0 : 1
+            case .custom:
+                // One row per server, then the row that adds one.
+                return self.customServers.count + 1
+            case .published:
+                return self.publishedServers.count
+        }
     }
 
     public func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
-        if self.diagnosticText.isEmpty {
-            return "Sign in to a server"
+        guard section < self.visibleSections.count else {
+            return nil
         }
-        return "Sign in to a server\n" + self.diagnosticText
+        switch self.visibleSections[section] {
+            case .telegram:
+                return "Official"
+            case .custom:
+                return "Your servers"
+            case .published:
+                return "Published"
+        }
     }
 
     public func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-        let server = self.servers[indexPath.row]
         let cell = UITableViewCell(style: .subtitle, reuseIdentifier: nil)
-        cell.textLabel?.text = server.name
         cell.textLabel?.textColor = self.theme.list.itemPrimaryTextColor
+        cell.detailTextLabel?.textColor = self.theme.list.itemSecondaryTextColor
+
+        // The last row of the user's own section is the one that adds a server:
+        // there is always somewhere to go when the list is empty.
+        let isAddRow = indexPath.section < self.visibleSections.count
+            && self.visibleSections[indexPath.section] == .custom
+            && indexPath.row >= self.customServers.count
+        guard !isAddRow, let server = self.server(at: indexPath) else {
+            cell.textLabel?.text = "Add Server"
+            cell.textLabel?.textColor = self.theme.list.itemAccentColor
+            cell.detailTextLabel?.text = "Address, port and RSA key"
+            cell.imageView?.image = UIImage(systemName: "plus.circle.fill")?.withTintColor(self.theme.list.itemAccentColor, renderingMode: .alwaysOriginal)
+            cell.imageView?.contentMode = .scaleAspectFit
+            cell.accessoryType = .disclosureIndicator
+            return cell
+        }
+
+        cell.textLabel?.text = server.name
         cell.imageView?.image = self.logo(for: server)
         cell.imageView?.contentMode = .scaleAspectFit
 
         var detail = server.isTelegram ? "Official Telegram cloud" : server.endpoint
+        if !server.isTelegram && !PolySrvServers.shared.isCustomServer(server.id) && !PolySrvServers.shared.isPublished(server.id) {
+            detail += " · no longer published"
+        }
         if let status = self.statusByServerId[server.id] {
             detail += "  ·  " + status
         }
         cell.detailTextLabel?.text = detail
-        cell.detailTextLabel?.textColor = self.theme.list.itemSecondaryTextColor
         cell.accessoryType = .disclosureIndicator
         return cell
     }
 
     public func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
-        let server = self.servers[indexPath.row]
-        self.dismiss()
-        self.onSelect(server)
+        guard let server = self.server(at: indexPath) else {
+            self.presentEdit(server: nil)
+            return
+        }
+        self.select(server)
+    }
+
+    public func tableView(_ tableView: UITableView, trailingSwipeActionsConfigurationForRowAt indexPath: IndexPath) -> UISwipeActionsConfiguration? {
+        guard let server = self.server(at: indexPath), PolySrvServers.shared.isCustomServer(server.id) else {
+            // The official cloud and the published servers are read-only.
+            return nil
+        }
+        let edit = UIContextualAction(style: .normal, title: "Edit", handler: { [weak self] _, _, completion in
+            self?.presentEdit(server: server)
+            completion(true)
+        })
+        let delete = UIContextualAction(style: .destructive, title: "Delete", handler: { [weak self] _, _, completion in
+            self?.delete(server)
+            completion(true)
+        })
+        return UISwipeActionsConfiguration(actions: [delete, edit])
     }
 
     // MARK: - Logos
@@ -254,6 +442,9 @@ public final class PolySrvServerSelectController: ViewController, UITableViewDat
         if server.isTelegram {
             let plane = UIImage(systemName: "paperplane.fill")
             return plane?.withTintColor(self.theme.list.itemAccentColor, renderingMode: .alwaysOriginal)
+        }
+        if !server.logoPath.isEmpty, let image = UIImage(contentsOfFile: server.logoPath) {
+            return image
         }
         let initial = server.name.first.map { String($0).uppercased() } ?? "?"
         return PolySrvServerSelectController.avatarImage(initial: initial)
@@ -327,8 +518,23 @@ public final class PolySrvServerSelectController: ViewController, UITableViewDat
                     return
                 }
                 self.statusByServerId[server.id] = ok ? "\(elapsed) ms" : "unreachable"
-                if let row = self.servers.firstIndex(where: { $0.id == server.id }) {
-                    self.controllerNode.tableView.reloadRows(at: [IndexPath(row: row, section: 0)], with: .none)
+                for (section, kind) in self.visibleSections.enumerated() {
+                    let row: Int?
+                    switch kind {
+                        case .telegram:
+                            row = self.telegramServer?.id == server.id ? 0 : nil
+                        case .custom:
+                            row = self.customServers.firstIndex(where: { $0.id == server.id })
+                        case .published:
+                            row = self.publishedServers.firstIndex(where: { $0.id == server.id })
+                    }
+                    if let row = row {
+                        let indexPath = IndexPath(row: row, section: section)
+                        if indexPath.section < self.controllerNode.tableView.numberOfSections, indexPath.row < self.controllerNode.tableView.numberOfRows(inSection: indexPath.section) {
+                            self.controllerNode.tableView.reloadRows(at: [indexPath], with: .none)
+                            return
+                        }
+                    }
                 }
             }
         }
