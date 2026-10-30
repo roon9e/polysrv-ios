@@ -308,7 +308,11 @@ public final class PolySrvServerSelectController: ViewController, UITableViewDat
             self.reloadServers()
             self.pingAll()
         })
-        self.present(controller, in: .window(.root))
+        // Present in the window's global overlay. The picker itself is shown
+        // with presentOverlay(inGlobal: true), and Display renders a local
+        // overlay (what .window(.root) becomes) BELOW the global overlay
+        // containers, so the form would open hidden behind the picker.
+        self.presentInGlobalOverlay(controller)
     }
 
     private func delete(_ server: PolySrvServer) {
