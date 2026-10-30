@@ -32,6 +32,11 @@ public struct PolySrvServer: Codable, Equatable {
     public let multiDc: Bool
     public let mainDcId: Int
     public let restrictToTcp: Bool
+    /// A server's own image, when it names one. Carried through the model and
+    /// the store so a list that publishes it keeps it, and so the picker can
+    /// use it the moment there is a way to choose one; the avatar falls back to
+    /// the server's initial otherwise.
+    public let logoPath: String
     public let dataCenters: [PolySrvServerDataCenter]
 
     public init(
@@ -46,6 +51,7 @@ public struct PolySrvServer: Codable, Equatable {
         multiDc: Bool = false,
         mainDcId: Int = 2,
         restrictToTcp: Bool = false,
+        logoPath: String = "",
         dataCenters: [PolySrvServerDataCenter] = []
     ) {
         self.id = id
@@ -59,6 +65,7 @@ public struct PolySrvServer: Codable, Equatable {
         self.multiDc = multiDc
         self.mainDcId = mainDcId
         self.restrictToTcp = restrictToTcp
+        self.logoPath = logoPath
         self.dataCenters = dataCenters
     }
 
@@ -95,6 +102,7 @@ public struct PolySrvServer: Codable, Equatable {
         case multiDc
         case mainDcId
         case restrictToTcp
+        case logoPath
         case dataCenters = "dc"
     }
 
@@ -110,6 +118,7 @@ public struct PolySrvServer: Codable, Equatable {
         self.isOfficial = (try? c.decode(Bool.self, forKey: .isOfficial)) ?? false
         self.mainDcId = (try? c.decode(Int.self, forKey: .mainDcId)) ?? 2
         self.restrictToTcp = (try? c.decode(Bool.self, forKey: .restrictToTcp)) ?? false
+        self.logoPath = (try? c.decode(String.self, forKey: .logoPath)) ?? ""
         let dataCenters = (try? c.decode([PolySrvServerDataCenter].self, forKey: .dataCenters)) ?? []
         self.dataCenters = dataCenters
         self.multiDc = (try? c.decode(Bool.self, forKey: .multiDc)) ?? !dataCenters.isEmpty

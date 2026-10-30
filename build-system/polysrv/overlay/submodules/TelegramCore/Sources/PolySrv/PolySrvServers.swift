@@ -21,6 +21,17 @@ public final class PolySrvServers {
 
     public static let telegramServerId = "telegram"
 
+    /// How many accounts this client may hold, desktop's policy:
+    /// `min(premiumCount + 20, 50)`. The upstream 3-or-4 limit belongs to the
+    /// official cloud, and on this client an account normally belongs to a
+    /// different server, so it cannot be the client's own cap.
+    public static let freeAccountCount = 20
+    public static let premiumAccountCeiling = 50
+
+    public static func maximumAccountCount(premiumCount: Int) -> Int {
+        return min(premiumCount + PolySrvServers.freeAccountCount, PolySrvServers.premiumAccountCeiling)
+    }
+
     /// The scope of a server is its address, `host:port`, so two entries that
     /// name different ports of one host stay apart, and the same `host:port`
     /// under two local ids is one scope. The official Telegram cloud is the one
@@ -37,6 +48,11 @@ public final class PolySrvServers {
 
     private var builtinServers: [PolySrvServer] = []
     private var remoteServers: [PolySrvServer] = []
+    /// Servers the published list no longer names but an account is still bound
+    /// to. They stay resolvable - and visible - so such an account never falls
+    /// back to the official cloud silently, and they go away once nothing is
+    /// bound to them.
+    private var retainedServers: [PolySrvServer] = []
     private var customServers: [PolySrvServer] = []
     private var bindings: [String: String] = [:]
     /// The address (`host:port`) each account's network was last built against.
@@ -51,6 +67,7 @@ public final class PolySrvServers {
     private let customKey = "polysrv.servers.custom"
     private let bindingsKey = "polysrv.servers.bindings"
     private let appliedScopesKey = "polysrv.servers.appliedScopes"
+    private let retainedKey = "polysrv.servers.retained"
     private let pendingKey = "polysrv.servers.pending"
 
     init(defaults: UserDefaults = .standard) {
@@ -65,10 +82,17 @@ public final class PolySrvServers {
         defer { self.lock.unlock() }
 
         self.builtinServers = PolySrvServers.parseServers(Data(base64Encoded: polySrvDefaultServersJSONBase64))
-        if let cached = self.defaults.data(forKey: self.configKey), !PolySrvServers.parseServers(cached).isEmpty {
-            self.remoteServers = PolySrvServers.parseServers(cached)
+        // A cached list is honoured even when it is empty: an emptied
+        // servers.json is a real answer, not a failed fetch.
+        if let cached = self.defaults.data(forKey: self.configKey), let config = PolySrvServers.parseServersConfig(cached) {
+            self.remoteServers = config.servers
         } else {
             self.remoteServers = []
+        }
+        if let data = self.defaults.data(forKey: self.retainedKey) {
+            self.retainedServers = (try? JSONDecoder().decode([PolySrvServer].self, from: data)) ?? []
+        } else {
+            self.retainedServers = []
         }
         if let data = self.defaults.data(forKey: self.customKey) {
             self.customServers = (try? JSONDecoder().decode([PolySrvServer].self, from: data)) ?? []
@@ -89,14 +113,18 @@ public final class PolySrvServers {
         self.lastRemoteFetch = self.defaults.object(forKey: self.configDateKey) as? Date
     }
 
-    private static func parseServers(_ data: Data?) -> [PolySrvServer] {
+    /// The decoded envelope, or nil when the bytes are not a server list at
+    /// all. Distinguished from an empty list on purpose: a published
+    /// `{"servers": []}` is an answer, and it has to be able to empty the list.
+    private static func parseServersConfig(_ data: Data?) -> PolySrvServersConfig? {
         guard let data = data else {
-            return []
+            return nil
         }
-        if let config = try? JSONDecoder().decode(PolySrvServersConfig.self, from: data) {
-            return config.servers
-        }
-        return []
+        return try? JSONDecoder().decode(PolySrvServersConfig.self, from: data)
+    }
+
+    private static func parseServers(_ data: Data?) -> [PolySrvServer] {
+        return PolySrvServers.parseServersConfig(data)?.servers ?? []
     }
 
     // MARK: - The list
@@ -108,7 +136,7 @@ public final class PolySrvServers {
 
         var seen = Set<String>()
         var result: [PolySrvServer] = []
-        for server in self.builtinServers + self.remoteServers + self.customServers {
+        for server in self.builtinServers + self.remoteServers + self.retainedServers + self.customServers {
             if seen.insert(server.id).inserted {
                 result.append(server)
             }
@@ -124,6 +152,15 @@ public final class PolySrvServers {
         self.lock.lock()
         defer { self.lock.unlock() }
         return self.customServers.contains(where: { $0.id == id })
+    }
+
+    /// Whether the published list currently names this server. A server can be
+    /// listed while not published: it is retained because an account is bound
+    /// to it.
+    public func isPublished(_ id: String) -> Bool {
+        self.lock.lock()
+        defer { self.lock.unlock() }
+        return self.remoteServers.contains(where: { $0.id == id })
     }
 
     // MARK: - Per-account selection
@@ -212,10 +249,11 @@ public final class PolySrvServers {
     // MARK: - Custom servers
 
     @discardableResult
-    public func addCustomServer(name: String, host: String, port: Int, rsaPublicKey: String, multiDc: Bool, mainDcId: Int, dataCenters: [PolySrvServerDataCenter]) -> PolySrvServer {
+    public func addCustomServer(name: String, description: String = "", host: String, port: Int, rsaPublicKey: String, multiDc: Bool, mainDcId: Int, restrictToTcp: Bool = true, logoPath: String = "", dataCenters: [PolySrvServerDataCenter] = []) -> PolySrvServer {
         let server = PolySrvServer(
             id: UUID().uuidString,
             name: name,
+            description: description,
             host: host,
             port: port,
             rsaPublicKey: rsaPublicKey,
@@ -223,6 +261,8 @@ public final class PolySrvServers {
             isOfficial: false,
             multiDc: multiDc,
             mainDcId: mainDcId,
+            restrictToTcp: restrictToTcp,
+            logoPath: logoPath,
             dataCenters: dataCenters
         )
         self.lock.lock()
@@ -248,8 +288,86 @@ public final class PolySrvServers {
         self.lock.unlock()
     }
 
+    /// Whether a server's address or key may still be edited. Changing either
+    /// while an account is bound to it would point that account at a different
+    /// server while it kept the keys and state it made for the old one - the
+    /// handshake that never completes. Name, description and logo stay editable
+    /// because none of them reaches the connection.
+    public func canEditIdentity(of id: String) -> Bool {
+        self.lock.lock()
+        defer { self.lock.unlock() }
+        return !self.bindings.values.contains(id)
+    }
+
+    /// The accounts bound to the server whose scope is `host:port`, for the
+    /// confirmation a deletion needs.
+    public func accountsBound(toScope scope: String) -> [AccountRecordId] {
+        self.lock.lock()
+        defer { self.lock.unlock() }
+        var result: [AccountRecordId] = []
+        for (key, id) in self.bindings {
+            guard let server = self.serverLocked(id: id), PolySrvServers.scope(for: server) == scope, let value = Int64(key) else {
+                continue
+            }
+            result.append(AccountRecordId(rawValue: value))
+        }
+        return result
+    }
+
+    /// Unbind an account, so a server it used cannot stay referenced by it.
+    public func clearServer(forAccount accountId: AccountRecordId) {
+        self.lock.lock()
+        self.bindings.removeValue(forKey: self.accountKey(accountId))
+        self.appliedScopes.removeValue(forKey: self.accountKey(accountId))
+        self.defaults.set(try? JSONEncoder().encode(self.bindings), forKey: self.bindingsKey)
+        self.defaults.set(try? JSONEncoder().encode(self.appliedScopes), forKey: self.appliedScopesKey)
+        self.lock.unlock()
+    }
+
+    /// Drop the bindings of accounts that no longer exist, and any retained
+    /// server nothing points at any more, so an unpublished server really does
+    /// go away once the accounts that used it are gone.
+    public func pruneAccounts(keeping accountIds: Set<AccountRecordId>) {
+        self.lock.lock()
+        defer { self.lock.unlock() }
+
+        let keys = Set(accountIds.map { self.accountKey($0) })
+        let stale = self.bindings.keys.filter { !keys.contains($0) }
+        guard !stale.isEmpty else {
+            return
+        }
+        for key in stale {
+            self.bindings.removeValue(forKey: key)
+            self.appliedScopes.removeValue(forKey: key)
+        }
+        self.defaults.set(try? JSONEncoder().encode(self.bindings), forKey: self.bindingsKey)
+        self.defaults.set(try? JSONEncoder().encode(self.appliedScopes), forKey: self.appliedScopesKey)
+
+        let boundIds = Set(self.bindings.values)
+        let remaining = self.retainedServers.filter { boundIds.contains($0.id) }
+        if remaining.count != self.retainedServers.count {
+            self.retainedServers = remaining
+            self.defaults.set(try? JSONEncoder().encode(remaining), forKey: self.retainedKey)
+        }
+    }
+
+    private func serverLocked(id: String) -> PolySrvServer? {
+        for server in self.builtinServers + self.remoteServers + self.retainedServers + self.customServers where server.id == id {
+            return server
+        }
+        return nil
+    }
+
     private func persistCustomServersLocked() {
         self.defaults.set(try? JSONEncoder().encode(self.customServers), forKey: self.customKey)
+    }
+
+    /// Install a published list without the network, so the retention rules can
+    /// be exercised directly.
+    func setRemoteServersForTesting(_ servers: [PolySrvServer]) {
+        self.lock.lock()
+        self.applyRemoteServersLocked(servers)
+        self.lock.unlock()
     }
 
     // MARK: - Remote list
@@ -267,6 +385,25 @@ public final class PolySrvServers {
         self.fetch(URL(string: PolySrvRemote.serversURL), fallback: true, completion: completion)
     }
 
+    /// Replace the published list, carrying over the servers an account is
+    /// still bound to that the list no longer names: dropping one would make
+    /// `server(forAccount:)` resolve to nil and send that account to the
+    /// official cloud.
+    private func applyRemoteServersLocked(_ servers: [PolySrvServer]) {
+        let fetchedIds = Set(servers.map { $0.id })
+        let boundIds = Set(self.bindings.values)
+        var retained: [PolySrvServer] = []
+        var seen = Set<String>()
+        for server in self.remoteServers + self.retainedServers where boundIds.contains(server.id) && !fetchedIds.contains(server.id) {
+            if seen.insert(server.id).inserted {
+                retained.append(server)
+            }
+        }
+        self.remoteServers = servers
+        self.retainedServers = retained
+        self.defaults.set(try? JSONEncoder().encode(retained), forKey: self.retainedKey)
+    }
+
     private func fetch(_ url: URL?, fallback: Bool, completion: (() -> Void)?) {
         guard let url = url else {
             completion?()
@@ -279,10 +416,12 @@ public final class PolySrvServers {
             guard let self = self else {
                 return
             }
-            if let data = data, !PolySrvServers.parseServers(data).isEmpty {
-                let servers = PolySrvServers.parseServers(data)
+            // A valid envelope is accepted even when it names no servers: that
+            // is how a server is unpublished. Only a failed request or bytes
+            // that are not a list at all fall through to the fallback URL.
+            if let data = data, let config = PolySrvServers.parseServersConfig(data) {
                 self.lock.lock()
-                self.remoteServers = servers
+                self.applyRemoteServersLocked(config.servers)
                 self.lastRemoteFetch = Date()
                 self.defaults.set(data, forKey: self.configKey)
                 self.defaults.set(Date(), forKey: self.configDateKey)
