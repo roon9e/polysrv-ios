@@ -265,6 +265,19 @@ the publish job's `GH_TOKEN` rather than loosening the repo setting, or just
 
 ## 8. Landmines worth remembering
 
+* **A failed golden seed used to delete the golden.** On 2026-10-30 the 13.1.2
+  seed's cold compile failed on `provisioning profile ExpirationDate
+  (2026-10-30T17:06:30) is in the past` — the committed
+  `build-system/fake-codesigning/profiles/*.mobileprovision` are real Apple
+  profiles whose fixed expiry had passed, and `RegenerateProfilesForBundleId.py`
+  only rewrote the bundle id. The save steps are gated on
+  `steps.compile.outcome == 'success'`, so nothing was saved; the golden job's
+  own "Retire superseded golden entries" step then deleted the previous
+  generation (the current keys were absent), leaving **zero caches** and every
+  build compiling from scratch. Fixed: the regenerated profiles get a fixed
+  far-future `ExpirationDate`, and the retire step is gated on the save condition
+  and deletes nothing unless the current keys are present.
+
 * **Never edit upstream files in the working tree.** The feature lives in
   `build-system/polysrv/overlay/**` and `build-system/polysrv/edits.py`, applied
   by `apply_polysrv.py` at build time. A missing anchor is a hard failure (good).
