@@ -17,6 +17,7 @@ import plistlib
 import argparse
 import subprocess
 import base64
+import datetime
 
 from BuildEnvironment import run_executable_with_output
 
@@ -215,6 +216,15 @@ def update_profile_for_bundle_id(profile_dict, new_bundle_id, new_team_id, suffi
     # Update AppIDName (optional, for readability)
     if 'AppIDName' in profile_dict:
         profile_dict['AppIDName'] = new_bundle_id + suffix
+
+    # The source profiles are real Apple profiles whose ExpirationDate is a fixed
+    # date; once it passes, the entitlements step rejects every build ("provisioning
+    # profile ExpirationDate is in the past"). These are fake, self-signed profiles
+    # that iOS does not validate, so the regenerated ones get a far-future
+    # expiration. Both dates are FIXED, not now(), so the profile bytes (and the
+    # codesigning actions that consume them) stay cacheable.
+    profile_dict['ExpirationDate'] = datetime.datetime(2035, 1, 1, 0, 0, 0)
+    profile_dict['CreationDate'] = datetime.datetime(2025, 1, 1, 0, 0, 0)
 
     return profile_dict
 

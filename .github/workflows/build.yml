@@ -678,8 +678,16 @@ jobs:
       # to be deleted explicitly or it lingers until eviction and pushes the
       # repository over quota alongside its replacement. Failure here only costs
       # quota, so it must not fail the job.
+      #
+      # BUT it must never run when this seed did not save anything. The save steps
+      # are skipped when the compile did not succeed, and retiring on a failed
+      # seed would delete the only good generation: the current keys are absent
+      # from the cache list, so the sweep would remove every superseded entry and
+      # leave the repository with no cache at all (which is what happened on
+      # 2026-10-30). Gate on the same condition as the save, and delete nothing
+      # unless the current keys are actually present.
       - name: Retire superseded golden entries
-        if: always()
+        if: always() && steps.compile.outcome == 'success'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
@@ -689,9 +697,13 @@ jobs:
           set -uo pipefail
           gh api --paginate "repos/$GITHUB_REPOSITORY/actions/caches?per_page=100" > /tmp/caches.json
           python3 -c '
-          import json, os
+          import json, os, sys
           keep = {os.environ["CURRENT_CAS"], os.environ["CURRENT_REPOS"]}
           caches = json.load(open("/tmp/caches.json")).get("actions_caches", [])
+          keys = {c["key"] for c in caches}
+          if not keep <= keys:
+              print("current generation is not saved; leaving every entry alone", file=sys.stderr)
+              raise SystemExit(0)
           for c in caches:
               if c["key"].startswith("ios-polysrv-golden-") and c["key"] not in keep:
                   print(c["id"])
