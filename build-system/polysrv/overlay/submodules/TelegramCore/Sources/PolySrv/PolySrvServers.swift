@@ -21,6 +21,17 @@ public final class PolySrvServers {
 
     public static let telegramServerId = "telegram"
 
+    /// The scope of a server is its address, `host:port`, so two entries that
+    /// name different ports of one host stay apart, and the same `host:port`
+    /// under two local ids is one scope. The official Telegram cloud is the one
+    /// reserved scope, so an account moving to it is a scope change too.
+    public static func scope(for server: PolySrvServer?) -> String {
+        guard let server = server, !server.isTelegram else {
+            return PolySrvServers.telegramServerId
+        }
+        return server.host.lowercased() + ":" + String(server.port)
+    }
+
     private let defaults: UserDefaults
     private let lock = NSLock()
 
@@ -28,6 +39,10 @@ public final class PolySrvServers {
     private var remoteServers: [PolySrvServer] = []
     private var customServers: [PolySrvServer] = []
     private var bindings: [String: String] = [:]
+    /// The address (`host:port`) each account's network was last built against.
+    /// A change here is a server switch, and the network's persisted datacenter
+    /// state must not be carried over to the new server.
+    private var appliedScopes: [String: String] = [:]
     private var pendingServerId: String?
     private var lastRemoteFetch: Date?
 
@@ -35,6 +50,7 @@ public final class PolySrvServers {
     private let configDateKey = "polysrv.servers.config.date"
     private let customKey = "polysrv.servers.custom"
     private let bindingsKey = "polysrv.servers.bindings"
+    private let appliedScopesKey = "polysrv.servers.appliedScopes"
     private let pendingKey = "polysrv.servers.pending"
 
     init(defaults: UserDefaults = .standard) {
@@ -63,6 +79,11 @@ public final class PolySrvServers {
             self.bindings = (try? JSONDecoder().decode([String: String].self, from: data)) ?? [:]
         } else {
             self.bindings = [:]
+        }
+        if let data = self.defaults.data(forKey: self.appliedScopesKey) {
+            self.appliedScopes = (try? JSONDecoder().decode([String: String].self, from: data)) ?? [:]
+        } else {
+            self.appliedScopes = [:]
         }
         self.pendingServerId = self.defaults.string(forKey: self.pendingKey)
         self.lastRemoteFetch = self.defaults.object(forKey: self.configDateKey) as? Date
@@ -131,6 +152,22 @@ public final class PolySrvServers {
         self.lock.lock()
         self.bindings[self.accountKey(accountId)] = id
         self.defaults.set(try? JSONEncoder().encode(self.bindings), forKey: self.bindingsKey)
+        self.lock.unlock()
+    }
+
+    /// The `host:port` the account's network was last built against, or nil
+    /// before its first network. A network that finds a different scope must
+    /// drop the previous server's persisted datacenter state.
+    public func appliedScope(forAccount accountId: AccountRecordId) -> String? {
+        self.lock.lock()
+        defer { self.lock.unlock() }
+        return self.appliedScopes[self.accountKey(accountId)]
+    }
+
+    public func setAppliedScope(_ scope: String, forAccount accountId: AccountRecordId) {
+        self.lock.lock()
+        self.appliedScopes[self.accountKey(accountId)] = scope
+        self.defaults.set(try? JSONEncoder().encode(self.appliedScopes), forKey: self.appliedScopesKey)
         self.lock.unlock()
     }
 

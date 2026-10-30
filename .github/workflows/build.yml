@@ -189,6 +189,35 @@ jobs:
           cd "$SOURCE_DIR"
           python3 build-system/apply_branding.py build-system/branding/branding.json
 
+      # The API credentials are the fork's own (my.telegram.org), so they are not
+      # committed: this overwrites the public placeholder in the configuration with
+      # the repository secrets, in the build's copy of the tree. Branding never
+      # touches api_id/api_hash, so the order against the step above does not matter.
+      # The values are Actions secrets, so GitHub masks them in this public log even
+      # if a compiler error prints the -DAPP_CONFIG_API_HASH=... command line.
+      - name: Inject API credentials
+        env:
+          TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
+          TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TELEGRAM_API_ID:-}" ] || [ -z "${TELEGRAM_API_HASH:-}" ]; then
+            echo "::error::TELEGRAM_API_ID / TELEGRAM_API_HASH repository secrets are not set"
+            exit 1
+          fi
+          cd "$SOURCE_DIR"
+          python3 - <<'PY'
+          import json, os
+          path = "build-system/appstore-configuration.json"
+          with open(path) as f:
+              configuration = json.load(f)
+          configuration["api_id"] = os.environ["TELEGRAM_API_ID"]
+          configuration["api_hash"] = os.environ["TELEGRAM_API_HASH"]
+          with open(path, "w") as f:
+              json.dump(configuration, f, indent="\t")
+          print("api credentials injected")
+          PY
+
       # The multiserver overlay: new PolySRV sources plus the anchored edits that
       # hook them into the network, the account and MtProtoKit. Fails loudly if an
       # upstream anchor has moved, exactly like branding.

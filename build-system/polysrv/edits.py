@@ -49,6 +49,19 @@ EDITS = [
             "                apiEnvironment.datacenterOptionsLocked = !polySrvServer.multiDc\n"
             "                Logger.shared.log(\"PolySRV\", \"account \\(accountId.int64): server=\\(polySrvServer.id) dc=\\(polySrvServer.mainDcId) endpoint=\\(polySrvServer.endpoint) keyLen=\\(polySrvServer.rsaPublicKey.count) locked=\\(!polySrvServer.multiDc)\")\n"
             "            }\n"
+            "            \n"
+            "            // PolySRV: when an account's network is built for a different server\n"
+            "            // (host:port), the previous server's persisted datacenter keys, addresses\n"
+            "            // and tokens must be dropped before the context loads them: otherwise the\n"
+            "            // handshake presents the old server's permanent key and the new server\n"
+            "            // answers -404 without ever replacing it. This is the reset desktop's\n"
+            "            // restoreServer performs for a server switch.\n"
+            "            let polySrvScope = PolySrvServers.scope(for: polySrvServer)\n"
+            "            if PolySrvServers.shared.appliedScope(forAccount: accountId) != polySrvScope {\n"
+            "                apiEnvironment.datacenterStateReset = true\n"
+            "                PolySrvServers.shared.setAppliedScope(polySrvScope, forAccount: accountId)\n"
+            "                Logger.shared.log(\"PolySRV\", \"reset datacenter state for scope \\(polySrvScope)\")\n"
+            "            }\n"
         ),
     },
     # 2. Seed the datacenters from the server when one is selected; otherwise
@@ -201,6 +214,11 @@ EDITS = [
             "// server's endpoints from being rewritten by help.getConfig.\n"
             "@property (nonatomic) NSString * _Nullable customServerPublicKey;\n"
             "@property (nonatomic) bool datacenterOptionsLocked;\n"
+            "\n"
+            "// PolySRV: the network is being built for a different server (host:port), so\n"
+            "// the persisted datacenter keys, addresses and tokens of the previous server\n"
+            "// must not be reloaded. Consumed once by MTContext when its keychain is set.\n"
+            "@property (nonatomic) bool datacenterStateReset;\n"
         ),
     },
     {
@@ -214,6 +232,7 @@ EDITS = [
             "    result.accessHostOverride = self.accessHostOverride;\n"
             "    result.customServerPublicKey = self.customServerPublicKey;\n"
             "    result.datacenterOptionsLocked = self.datacenterOptionsLocked;\n"
+            "    result.datacenterStateReset = self.datacenterStateReset;\n"
         ),
     },
     {
@@ -246,6 +265,41 @@ EDITS = [
             "        }\n"
             "        _stage = MTDatacenterAuthStagePQ;\n"
             "    }\n"
+        ),
+    },
+    # PolySRV: a network built for a different server (host:port) must not reload
+    # the previous server's datacenter state, or its handshake presents the old
+    # server's permanent key and the new server answers -404 forever with no path
+    # that replaces it (the logout probe is disabled for a locked server).
+    {
+        "file": CONTEXT_M,
+        "label": "MTContext.m reset datacenter state on a server switch",
+        "old": (
+            "        _keychain = keychain;\n"
+            "        \n"
+            "        if (_keychain != nil)\n"
+            "        {\n"
+        ),
+        "new": (
+            "        _keychain = keychain;\n"
+            "        \n"
+            "        if (_keychain != nil)\n"
+            "        {\n"
+            "            if (_apiEnvironment.datacenterStateReset) {\n"
+            "                // PolySRV: this account's network is being built for another\n"
+            "                // server (host:port). Drop the previous server's datacenter\n"
+            "                // keys, addresses, selected schemes, tokens and scheme stats so\n"
+            "                // the loads below start empty and the new seeds, RSA key and\n"
+            "                // lock take over. This is desktop's restoreServer reset.\n"
+            "                [keychain removeObjectForKey:@\"datacenterAuthInfoById\" group:@\"persistent\"];\n"
+            "                [keychain removeObjectForKey:@\"datacenterAddressSetById\" group:@\"persistent\"];\n"
+            "                [keychain removeObjectForKey:@\"datacenterManuallySelectedSchemeById_v1\" group:@\"persistent\"];\n"
+            "                [keychain removeObjectForKey:@\"authTokenById\" group:@\"persistent\"];\n"
+            "                [keychain removeObjectForKey:@\"transportSchemeStats_v1\" group:@\"temp\"];\n"
+            "                if (MTLogEnabled()) {\n"
+            "                    MTLog(@\"[MTContext#%\" PRIxPTR \": datacenter state reset for the new server]\", (intptr_t)self);\n"
+            "                }\n"
+            "            }\n"
         ),
     },
     {
