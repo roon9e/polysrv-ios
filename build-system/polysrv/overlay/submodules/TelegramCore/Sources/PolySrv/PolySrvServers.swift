@@ -60,6 +60,10 @@ public final class PolySrvServers {
     /// state must not be carried over to the new server.
     private var appliedScopes: [String: String] = [:]
     private var pendingServerId: String?
+    /// The account a pending selection was chosen for. A selection with an owner
+    /// is handed only to that account; one without an owner (a first run, before
+    /// any account exists) may be handed to the first account that is built.
+    private var pendingServerOwner: String?
     private var lastRemoteFetch: Date?
 
     private let configKey = "polysrv.servers.config"
@@ -69,6 +73,7 @@ public final class PolySrvServers {
     private let appliedScopesKey = "polysrv.servers.appliedScopes"
     private let retainedKey = "polysrv.servers.retained"
     private let pendingKey = "polysrv.servers.pending"
+    private let pendingOwnerKey = "polysrv.servers.pendingOwner"
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -110,6 +115,7 @@ public final class PolySrvServers {
             self.appliedScopes = [:]
         }
         self.pendingServerId = self.defaults.string(forKey: self.pendingKey)
+        self.pendingServerOwner = self.defaults.string(forKey: self.pendingOwnerKey)
         self.lastRemoteFetch = self.defaults.object(forKey: self.configDateKey) as? Date
     }
 
@@ -172,17 +178,48 @@ public final class PolySrvServers {
     /// The server an account talks to, or nil for the official Telegram cloud.
     public func server(forAccount id: AccountRecordId) -> PolySrvServer? {
         self.lock.lock()
-        let bound = self.bindings[self.accountKey(id)]
+        let key = self.accountKey(id)
+        let bound = self.bindings[key]
         let pending = self.pendingServerId
+        let pendingOwner = self.pendingServerOwner
         self.lock.unlock()
 
         if let bound = bound, let server = self.server(id: bound) {
             return server
         }
-        if let pending = pending, let server = self.server(id: pending) {
+        // A pending selection belongs only to the account it was chosen for (or
+        // to the first account built, when it has no owner). Without that an
+        // unrelated account - the official Telegram one - reads as the custom
+        // server while a picker is open, and the scope change that follows wipes
+        // its keys.
+        if let pending = pending, pendingOwner == nil || pendingOwner == key, let server = self.server(id: pending) {
             return server
         }
         return nil
+    }
+
+    /// The scope an account's network is bound to, from its own binding only.
+    /// `server(forAccount:)` also considers a pending selection, which is right
+    /// when choosing a network and wrong for identity: two accounts that share a
+    /// user id are two accounts exactly when their bound servers differ.
+    public func boundScope(forAccount id: AccountRecordId) -> String {
+        self.lock.lock()
+        let bound = self.bindings[self.accountKey(id)]
+        self.lock.unlock()
+        return PolySrvServers.scope(for: bound.flatMap { self.server(id: $0) })
+    }
+
+    /// The name to group an account under, in the account lists. The official
+    /// cloud is the built-in server's name, so a list reads "Telegram" / the
+    /// custom server's name.
+    public func boundServerName(forAccount id: AccountRecordId) -> String {
+        self.lock.lock()
+        let bound = self.bindings[self.accountKey(id)]
+        self.lock.unlock()
+        if let bound = bound, let server = self.server(id: bound) {
+            return server.name
+        }
+        return self.allServers().first(where: { $0.isTelegram })?.name ?? "Telegram"
     }
 
     public func setServer(id: String, forAccount accountId: AccountRecordId) {
@@ -199,14 +236,21 @@ public final class PolySrvServers {
     /// every account that has no binding of its own.
     public func bindPendingIfNeeded(forAccount accountId: AccountRecordId) {
         self.lock.lock()
-        guard self.bindings[self.accountKey(accountId)] == nil, let pending = self.pendingServerId else {
+        let key = self.accountKey(accountId)
+        guard self.bindings[key] == nil, let pending = self.pendingServerId else {
             self.lock.unlock()
             return
         }
-        self.bindings[self.accountKey(accountId)] = pending
+        if let owner = self.pendingServerOwner, owner != key {
+            self.lock.unlock()
+            return
+        }
+        self.bindings[key] = pending
         self.pendingServerId = nil
+        self.pendingServerOwner = nil
         self.defaults.set(try? JSONEncoder().encode(self.bindings), forKey: self.bindingsKey)
         self.defaults.removeObject(forKey: self.pendingKey)
+        self.defaults.removeObject(forKey: self.pendingOwnerKey)
         self.lock.unlock()
     }
 
@@ -226,6 +270,18 @@ public final class PolySrvServers {
         self.lock.unlock()
     }
 
+    /// Bind a pending selection to the exact account it was chosen for, so it
+    /// can never be handed to a different account that has no binding of its
+    /// own (the official cloud's account, typically).
+    public func setPendingServer(id: String, forAccount accountId: AccountRecordId) {
+        self.lock.lock()
+        self.pendingServerId = id
+        self.pendingServerOwner = self.accountKey(accountId)
+        self.defaults.set(id, forKey: self.pendingKey)
+        self.defaults.set(self.pendingServerOwner, forKey: self.pendingOwnerKey)
+        self.lock.unlock()
+    }
+
     /// The server chosen before the first account exists. It is applied to an
     /// account until that account is bound explicitly.
     public var selectedServerIdForNextAccount: String? {
@@ -237,6 +293,8 @@ public final class PolySrvServers {
         set {
             self.lock.lock()
             self.pendingServerId = newValue
+            self.pendingServerOwner = nil
+            self.defaults.removeObject(forKey: self.pendingOwnerKey)
             if let newValue = newValue {
                 self.defaults.set(newValue, forKey: self.pendingKey)
             } else {

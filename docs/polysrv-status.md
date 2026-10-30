@@ -7,8 +7,9 @@ rationale for the overlay pipeline itself is in
 repo's general rules are in [`CLAUDE.md`](../CLAUDE.md) and
 [`AGENTS.md`](../AGENTS.md).
 
-Last updated: 2026-10-30, branch tip `d071b6178f`, on top of upstream
-`TelegramMessenger/Telegram-iOS@279f89e4d4` (**13.1.2**).
+Last updated: 2026-10-30 (later), on top of upstream
+`TelegramMessenger/Telegram-iOS@279f89e4d4` (**13.1.2**). The device findings and
+the fixes for them are in §0b below.
 
 ## 0. Where the branch is now
 
@@ -34,6 +35,61 @@ Last updated: 2026-10-30, branch tip `d071b6178f`, on top of upstream
      at `.window(.root)`, a **local** overlay, which `NavigationController`
      renders *below* the global overlay containers, i.e. below the picker that
      opened them. They now go to the window's global overlay.
+
+## 0b. Device findings (2026-10-30) and the fixes
+
+A device run on the published build (13.1.2 / 3732) showed three defects; the
+on-device file log (`Documents/polysrv-logs`, forced by the overlay) pinned the
+first two exactly. Nothing here comes from an unverified guess.
+
+**A custom-server login did not survive (the "back at the first server" bug).**
+The log shows the account is bound to the picked server, then `reset datacenter
+state for scope telegram` at login, connections to the official datacenters, and
+`401 AUTH_KEY_UNREGISTERED` → `logoutFromAccount`. Cause: the overlay's own
+"prune dead bindings" call ran while the account was still authorizing, with a
+keep-set of *authorized* accounts only, so it deleted the binding (and applied
+scope) of the account whose login was in flight. `PolySrvServers.pruneAccounts`
+was correct; the call site was not.
+
+- Fixed: the keep-set now also keeps `currentAuth?.id`.
+- Hardened: a pending server choice is now **owned** by the account it was made
+  for (`setPendingServer(id:forAccount:)` / `pendingServerOwner`), so
+  `server(forAccount:)` can never hand a pending custom server to a different
+  account that has no binding of its own (the official cloud's), which would have
+  re-scoped and wiped *its* keys.
+
+**The same number could not be signed in to Telegram and a custom server.**
+Two upstream rules key on the user id / phone number alone:
+
+- the phone-entry "already authorized" guard
+  (`AuthorizationSequencePhoneEntryController.nextPressed`);
+- the account de-duplication by `(peerId, isTestingEnvironment)`
+  (`SharedAccountContext`), which deletes one of two records for one user id.
+
+- Fixed: both now include the account's **bound server scope**. The same number
+  on two servers is two accounts and both are kept; the same number on one server
+  still collapses/asks as before. `PolySrvServers.boundScope(forAccount:)` is the
+  binding-only scope used for identity (no pending fallback).
+
+**The account menu.** With the two bugs above, the second account never survived,
+so the Settings account list (which only lists *other* accounts) looked empty.
+
+- The native Settings account list is now **grouped by server**, with the server's
+  name as the group header and the official cloud first — the same shape the
+  Android and Windows clients use.
+- A second entry, **"All Accounts"**, always present in Settings ▸ Accounts, opens
+  the overlay's own screen listing every account from every server (switch, add,
+  log out). It is reachable even with a single account.
+
+**Per-server cache separation.** Verified rather than changed: every account owns
+its `Postbox` under `account-<recordId>`, and therefore its own media cache
+(`Postbox.mediaBox`) and its own `AnimationCache`; emoji/sticker/gift catalogs are
+engine data in that postbox. A new account on a new server therefore starts empty
+and fetches *that* server's catalogs. The one shared cache,
+`SharedAccountContext.accountManager.mediaBox`, holds only themes, wallpapers and
+service backgrounds — account-independent UI resources, not server content — so
+it is deliberately not per-server. No process-wide cache keyed on a server id was
+found.
 
 ## 1. Recent CI runs, and what each one actually failed on
 

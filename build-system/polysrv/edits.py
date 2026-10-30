@@ -19,11 +19,13 @@ AUTH_SERVICE_M = "submodules/MtProtoKit/Sources/MTDatacenterAuthMessageService.m
 CONTEXT_M = "submodules/MtProtoKit/Sources/MTContext.m"
 RUST_ENGINE_SWIFT = "submodules/MTProtoRustEngine/Sources/MTProtoRustEngine/RustNetworkEngine.swift"
 AUTH_SEQUENCE_SWIFT = "submodules/AuthorizationUI/Sources/AuthorizationSequenceController.swift"
+AUTH_PHONE_SWIFT = "submodules/AuthorizationUI/Sources/AuthorizationSequencePhoneEntryController.swift"
 APP_DELEGATE_SWIFT = "submodules/TelegramUI/Sources/AppDelegate.swift"
 SHARED_ACCOUNT_CONTEXT_SWIFT = "submodules/TelegramUI/Sources/SharedAccountContext.swift"
 LOGOUT_OPTIONS_SWIFT = "submodules/SettingsUI/Sources/LogoutOptionsController.swift"
 DELETE_ACCOUNT_OPTIONS_SWIFT = "submodules/SettingsUI/Sources/DeleteAccountOptionsController.swift"
 SETTINGS_SEARCHABLE_ITEMS_SWIFT = "submodules/SettingsUI/Sources/Search/SettingsSearchableItems.swift"
+SETTINGS_ACCOUNTS_ITEMS_SWIFT = "submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift"
 TELEGRAM_BUILD = "Telegram/BUILD"
 
 EDITS = [
@@ -579,6 +581,38 @@ EDITS = [
             "                }\n"
         ),
     },
+    # PolySRV: a phone number is "already authorized" only on the server it is
+    # already on. Upstream compares the number against every other account, so
+    # the same number could never be signed in to the official cloud and a
+    # self-hosted server at once. The target server of the number being entered
+    # is the account's own binding (set before phone entry), and the other
+    # accounts are compared by their bound scope.
+    {
+        "file": AUTH_PHONE_SWIFT,
+        "label": "AuthorizationSequencePhoneEntryController.swift already-authorized is per server",
+        "old": (
+            "            let logInNumber = cleanPhoneNumber(self.controllerNode.currentNumber, removePlus: true)\n"
+            "            var existing: (String, AccountRecordId)?\n"
+            "            for (number, id, isTestingEnvironment) in self.otherAccountPhoneNumbers.1 {\n"
+            "                if isTestingEnvironment == self.isTestingEnvironment && cleanPhoneNumber(number, removePlus: true) == logInNumber {\n"
+            "                    existing = (number, id)\n"
+            "                }\n"
+            "            }\n"
+        ),
+        "new": (
+            "            let logInNumber = cleanPhoneNumber(self.controllerNode.currentNumber, removePlus: true)\n"
+            "            // PolySRV: a number is only 'already authorized' on the server it\n"
+            "            // is already on. The same number on another server (a custom one\n"
+            "            // next to the official cloud) is a new account and goes through.\n"
+            "            let polySrvTargetScope = PolySrvServers.scope(for: self.account.flatMap { PolySrvServers.shared.server(forAccount: $0.id) })\n"
+            "            var existing: (String, AccountRecordId)?\n"
+            "            for (number, id, isTestingEnvironment) in self.otherAccountPhoneNumbers.1 {\n"
+            "                if isTestingEnvironment == self.isTestingEnvironment && cleanPhoneNumber(number, removePlus: true) == logInNumber && PolySrvServers.shared.boundScope(forAccount: id) == polySrvTargetScope {\n"
+            "                    existing = (number, id)\n"
+            "                }\n"
+            "            }\n"
+        ),
+    },
     # PolySRV: put the app's logs in the app's own Documents so they can be pulled
     # off the device with file sharing, when there is no Mac to read the console.
     {
@@ -669,17 +703,22 @@ EDITS = [
             "            guard let self = self else {\n"
             "                return\n"
             "            }\n"
-            "            PolySrvServers.shared.selectedServerIdForNextAccount = server.id\n"
             "            Logger.shared.log(\"PolySRV\", \"new account on server \\(server.id) (\\(server.endpoint))\")\n"
-            "            self.polySrvCreateAuth(testingEnvironment: testingEnvironment)\n"
+            "            self.polySrvCreateAuth(testingEnvironment: testingEnvironment, serverId: server.id)\n"
             "        }, onCancel: {\n"
             "        })\n"
             "        (self.mainWindow?.viewController as? NavigationController)?.presentOverlay(controller: picker, inGlobal: true, blockInteraction: true)\n"
             "    }\n"
             "    \n"
-            "    private func polySrvCreateAuth(testingEnvironment: Bool) {\n"
+            "    private func polySrvCreateAuth(testingEnvironment: Bool, serverId: String? = nil) {\n"
             "        let _ = self.accountManager.transaction({ transaction -> Void in\n"
-            "            let _ = transaction.createAuth([.environment(AccountEnvironmentAttribute(environment: testingEnvironment ? .test : .production))])\n"
+            "            let polySrvAuthRecord = transaction.createAuth([.environment(AccountEnvironmentAttribute(environment: testingEnvironment ? .test : .production))])\n"
+            "            // PolySRV: tie the choice to the account it was made for, so the\n"
+            "            // selection is never handed to a different account (the official\n"
+            "            // cloud's) that has no binding of its own.\n"
+            "            if let serverId = serverId, let polySrvAuthRecord = polySrvAuthRecord {\n"
+            "                PolySrvServers.shared.setPendingServer(id: serverId, forAccount: polySrvAuthRecord.id)\n"
+            "            }\n"
             "        }).start()\n"
             "    }\n"
         ),
@@ -700,9 +739,58 @@ EDITS = [
             "                    \n"
             "                    // PolySRV: drop the bindings of accounts that no longer exist,\n"
             "                    // so a server the published list no longer carries does not linger\n"
-            "                    // just because a dead account still named it.\n"
-            "                    PolySrvServers.shared.pruneAccounts(keeping: Set(self.activeAccountsValue!.accounts.map { $0.0 }))\n"
+            "                    // just because a dead account still named it. The account that is\n"
+            "                    // still authorizing is kept: it is not in `accounts` yet, and\n"
+            "                    // pruning it would drop the binding its login is on.\n"
+            "                    var polySrvKeeping = Set(self.activeAccountsValue!.accounts.map { $0.0 })\n"
+            "                    if let polySrvAuthId = self.activeAccountsValue!.currentAuth?.id {\n"
+            "                        polySrvKeeping.insert(polySrvAuthId)\n"
+            "                    }\n"
+            "                    PolySrvServers.shared.pruneAccounts(keeping: polySrvKeeping)\n"
             "                }\n"
+        ),
+    },
+    # PolySRV: an account's identity is (user id, server), not the user id alone.
+    # The same number on two servers is two accounts and both have to be kept;
+    # this dedup is what collapses two records for one account, so the server
+    # scope belongs in the key. Two records on the same server still collapse.
+    {
+        "file": SHARED_ACCOUNT_CONTEXT_SWIFT,
+        "label": "SharedAccountContext.swift account identity includes the server",
+        "old": (
+            "                struct AccountPeerKey: Hashable {\n"
+            "                    let peerId: EnginePeer.Id\n"
+            "                    let isTestingEnvironment: Bool\n"
+            "                }\n"
+        ),
+        "new": (
+            "                struct AccountPeerKey: Hashable {\n"
+            "                    let peerId: EnginePeer.Id\n"
+            "                    let isTestingEnvironment: Bool\n"
+            "                    // PolySRV: the same user id on two servers is two\n"
+            "                    // accounts, and both have to be kept.\n"
+            "                    let polySrvScope: String\n"
+            "                }\n"
+        ),
+    },
+    {
+        "file": SHARED_ACCOUNT_CONTEXT_SWIFT,
+        "label": "SharedAccountContext.swift dedup by server scope (contains)",
+        "old": (
+            "                        if existingAccountPeerKeys.contains(AccountPeerKey(peerId: account.peerId, isTestingEnvironment: account.testingEnvironment)) {\n"
+        ),
+        "new": (
+            "                        if existingAccountPeerKeys.contains(AccountPeerKey(peerId: account.peerId, isTestingEnvironment: account.testingEnvironment, polySrvScope: PolySrvServers.shared.boundScope(forAccount: accountRecord.0))) {\n"
+        ),
+    },
+    {
+        "file": SHARED_ACCOUNT_CONTEXT_SWIFT,
+        "label": "SharedAccountContext.swift dedup by server scope (insert)",
+        "old": (
+            "                            existingAccountPeerKeys.insert(AccountPeerKey(peerId: account.peerId, isTestingEnvironment: account.testingEnvironment))\n"
+        ),
+        "new": (
+            "                            existingAccountPeerKeys.insert(AccountPeerKey(peerId: account.peerId, isTestingEnvironment: account.testingEnvironment, polySrvScope: PolySrvServers.shared.boundScope(forAccount: accountRecord.0)))\n"
         ),
     },
     # PolySRV: the account cap counts every server, as desktop's does
@@ -777,6 +865,116 @@ EDITS = [
             "import PeerInfoUI\n"
             "import SettingsUI\n"
             "import AuthorizationUI\n"
+        ),
+    },
+    # PolySRV: the native Settings account list, grouped by server, with the
+    # server's name as the group header (the official cloud first) - the same
+    # shape the Android and Windows clients use.
+    {
+        "file": SETTINGS_ACCOUNTS_ITEMS_SWIFT,
+        "label": "Settings accounts grouped by server",
+        "old": (
+            "            for (peerAccountContext, peer, badgeCount) in settings.accountsAndPeers {\n"
+            "                let mappedContext = ItemListPeerItem.Context.custom(ItemListPeerItem.Context.Custom(\n"
+            "                    accountPeerId: peerAccountContext.account.peerId,\n"
+            "                    engine: peerAccountContext.engine,\n"
+            "                    animationCache: context.animationCache,\n"
+            "                    animationRenderer: context.animationRenderer,\n"
+            "                    isPremiumDisabled: false,\n"
+            "                    resolveInlineStickers: { fileIds in\n"
+            "                        return context.engine.stickers.resolveInlineStickers(fileIds: fileIds)\n"
+            "                    }\n"
+            "                ))\n"
+            "                let member: PeerInfoMember = .account(peer: EngineRenderedPeer(peer: peer))\n"
+            "                items[.accounts]!.append(PeerInfoScreenMemberItem(id: member.id, context: mappedContext, enclosingPeer: nil, member: member, badge: badgeCount > 0 ? \"\\(compactNumericCountString(Int(badgeCount), decimalSeparator: presentationData.dateTimeFormat.decimalSeparator))\" : nil, isAccount: true, action: { action in\n"
+            "                    switch action {\n"
+            "                    case .open:\n"
+            "                        interaction.switchToAccount(peerAccountContext.account.id)\n"
+            "                    case .remove:\n"
+            "                        interaction.logoutAccount(peerAccountContext.account.id)\n"
+            "                    default:\n"
+            "                        break\n"
+            "                    }\n"
+            "                }, contextAction: { node, gesture in\n"
+            "                    interaction.accountContextMenu(peerAccountContext.account.id, node, gesture)\n"
+            "                }))\n"
+            "            }\n"
+        ),
+        "new": (
+            "            // PolySRV: one group per server, under the server's name.\n"
+            "            var polySrvGroups: [(name: String, isTelegram: Bool, entries: [(AccountContext, EnginePeer, Int32)])] = []\n"
+            "            for polySrvEntry in settings.accountsAndPeers {\n"
+            "                let polySrvName = PolySrvServers.shared.boundServerName(forAccount: polySrvEntry.0.account.id)\n"
+            "                let polySrvIsTelegram = PolySrvServers.shared.boundScope(forAccount: polySrvEntry.0.account.id) == PolySrvServers.telegramServerId\n"
+            "                if let polySrvIndex = polySrvGroups.firstIndex(where: { $0.name == polySrvName && $0.isTelegram == polySrvIsTelegram }) {\n"
+            "                    polySrvGroups[polySrvIndex].entries.append(polySrvEntry)\n"
+            "                } else {\n"
+            "                    polySrvGroups.append((name: polySrvName, isTelegram: polySrvIsTelegram, entries: [polySrvEntry]))\n"
+            "                }\n"
+            "            }\n"
+            "            polySrvGroups.sort { lhs, rhs in\n"
+            "                if lhs.isTelegram != rhs.isTelegram {\n"
+            "                    return lhs.isTelegram\n"
+            "                }\n"
+            "                return lhs.name < rhs.name\n"
+            "            }\n"
+            "            var polySrvHeaderId = 900\n"
+            "            for polySrvGroup in polySrvGroups {\n"
+            "                items[.accounts]!.append(PeerInfoScreenHeaderItem(id: polySrvHeaderId, text: polySrvGroup.name))\n"
+            "                polySrvHeaderId += 1\n"
+            "                for (peerAccountContext, peer, badgeCount) in polySrvGroup.entries {\n"
+            "                    let mappedContext = ItemListPeerItem.Context.custom(ItemListPeerItem.Context.Custom(\n"
+            "                        accountPeerId: peerAccountContext.account.peerId,\n"
+            "                        engine: peerAccountContext.engine,\n"
+            "                        animationCache: context.animationCache,\n"
+            "                        animationRenderer: context.animationRenderer,\n"
+            "                        isPremiumDisabled: false,\n"
+            "                        resolveInlineStickers: { fileIds in\n"
+            "                            return context.engine.stickers.resolveInlineStickers(fileIds: fileIds)\n"
+            "                        }\n"
+            "                    ))\n"
+            "                    let member: PeerInfoMember = .account(peer: EngineRenderedPeer(peer: peer))\n"
+            "                    items[.accounts]!.append(PeerInfoScreenMemberItem(id: member.id, context: mappedContext, enclosingPeer: nil, member: member, badge: badgeCount > 0 ? \"\\(compactNumericCountString(Int(badgeCount), decimalSeparator: presentationData.dateTimeFormat.decimalSeparator))\" : nil, isAccount: true, action: { action in\n"
+            "                        switch action {\n"
+            "                        case .open:\n"
+            "                            interaction.switchToAccount(peerAccountContext.account.id)\n"
+            "                        case .remove:\n"
+            "                            interaction.logoutAccount(peerAccountContext.account.id)\n"
+            "                        default:\n"
+            "                            break\n"
+            "                        }\n"
+            "                    }, contextAction: { node, gesture in\n"
+            "                        interaction.accountContextMenu(peerAccountContext.account.id, node, gesture)\n"
+            "                    }))\n"
+            "                }\n"
+            "            }\n"
+        ),
+    },
+    # PolySRV: a single "All Accounts" entry that opens the overlay's own screen
+    # listing every account from every server. It sits outside the "has other
+    # accounts" guard, so it is reachable even with a single account.
+    {
+        "file": SETTINGS_ACCOUNTS_ITEMS_SWIFT,
+        "label": "Settings All Accounts entry",
+        "old": (
+            "            items[.accounts]!.append(PeerInfoScreenActionItem(id: 100, text: presentationData.strings.Settings_AddAccount, icon: PresentationResourcesItemList.plusIconImage(presentationData.theme), action: {\n"
+            "                interaction.openSettings(.addAccount)\n"
+            "            }))\n"
+            "        }\n"
+        ),
+        "new": (
+            "            items[.accounts]!.append(PeerInfoScreenActionItem(id: 100, text: presentationData.strings.Settings_AddAccount, icon: PresentationResourcesItemList.plusIconImage(presentationData.theme), action: {\n"
+            "                interaction.openSettings(.addAccount)\n"
+            "            }))\n"
+            "        }\n"
+            "        \n"
+            "        // PolySRV: always reachable, even with a single account, so every\n"
+            "        // account from every server can be seen and switched between.\n"
+            "        items[.accounts]!.append(PeerInfoScreenActionItem(id: 101, text: \"All Accounts\", action: {\n"
+            "            if let navigationController = context.sharedContext.mainWindow?.viewController as? NavigationController {\n"
+            "                navigationController.pushViewController(PolySrvAccountsController(context: context))\n"
+            "            }\n"
+            "        }))\n"
         ),
     },
 ]

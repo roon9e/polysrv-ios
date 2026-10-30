@@ -56,6 +56,38 @@ that as an environment from whoever presents it, since only the presenter has th
 account manager. An account holds `min(premiumCount + 20, 50)` servers, desktop's
 cap, not the official cloud's 3-or-4.
 
+## Accounts, identity and the account menu
+
+An account's identity on this client is **(user id, server)**, not the user id
+alone. The same phone number may be signed in to the official cloud and to a
+self-hosted server at once, and both accounts are kept:
+
+- `PolySrvServers.boundScope(forAccount:)` is the account's bound `host:port`
+  (`telegram` for the official cloud), from its own binding only.
+- The phone-entry "already authorized" check and the account de-duplication both
+  use that scope, so a number on another server is a new account and a number that
+  already exists on the *same* server is still treated as before.
+- A pending server choice is owned by the account it was made for, so it cannot be
+  handed to a different account that has no binding of its own.
+
+The account list is grouped by server, the server's name as the group header and
+the official cloud first (the same shape as the Android/Windows clients). The
+native Settings list does this, and Settings ▸ Accounts also carries an **All
+Accounts** entry that opens `PolySrvAccountsController` (in the `PeerInfoScreen`
+module), which always lists every account from every server with switch / add /
+log out.
+
+## Cache separation between servers
+
+Each account owns its `Postbox` under `account-<recordId>`, so it owns its media
+cache (`Postbox.mediaBox`, `basePath + "/media"`) and its `AnimationCache`
+(`AccountContext.animationCache`). Emoji, sticker and gift catalogs are engine
+data in that postbox; a new account on a new server starts empty and fetches that
+server's catalogs. Nothing server-scoped is shared. The only process-wide media
+cache is `SharedAccountContext.accountManager.mediaBox`, which holds themes,
+wallpapers and service backgrounds — account-independent UI resources — and is
+deliberately not per-server.
+
 ## The golden build cache
 
 `.github/workflows/build.yml` moves bazel's `--disk_cache` and `--repository_cache`
