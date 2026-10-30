@@ -39,6 +39,26 @@ the `TELEGRAM_API_ID` / `TELEGRAM_API_HASH` repository secrets in the build's co
 of the tree (the committed values stay Telegram's public ones). The credentials
 are still compiled into the IPA, so a published IPA contains them.
 
+## The golden build cache
+
+`.github/workflows/build.yml` moves bazel's `--disk_cache` and `--repository_cache`
+between runners as the `ios-polysrv-golden-*` cache entries; only the `golden` job
+(the `seed_cache` dispatch) writes them and the build job empties the paths before
+its post-job steps, so a build can never shadow a generation.
+
+The seed compiles **the same tree the build compiles** - branding, this overlay
+and the regenerated provisioning profiles applied - so a branded build reuses its
+whole graph. Seeding a generic tree only made sense for a builder that branded a
+different app on every run. The API credentials are deliberately left out of the
+seed: they reach only `BuildConfig`'s copts, so the cost is about three actions
+and the api_hash stays out of the retained entry.
+
+`bazel_action_stats.py` reads bazel's closing `N processes: ...` line and reports
+the reuse: `internal` actions are uncacheable and excluded, so a *cacheable miss*
+is a cacheable action that actually ran. The build job warns above 300 misses -
+the golden no longer matches the tree, dispatch `seed_cache`. That is the same
+signal ccache's miss count gives the desktop CI.
+
 ## Server switches reset the account's datacenter state
 
 An account's MTProto keys, addresses and tokens persist in its keychain, and they

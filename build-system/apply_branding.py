@@ -667,6 +667,23 @@ class Branding:
             else:
                 self.report(True, 'producer branded in ' + rel)
 
+    def apply_version_footer(self, rel):
+        """Name the platform in the Debug Settings version footer.
+
+        Upstream hard-codes "Telegram for iOS <version>" there, which the
+        share-link sweep never touches (it only rewrites t.me/tg:// literals).
+        The session list already reads "<app name> for iOS", because Telegram
+        names a session after the api_id's registered app title, so the footer
+        is made to agree with it instead of naming Telegram.
+        """
+        name = self.cfg['general']['app_name']
+        self.apply_anchor(
+            rel,
+            '"Telegram for iOS \\(bundleVersion)',
+            '"' + name + ' for iOS \\(bundleVersion)',
+            'Debug Settings version footer',
+        )
+
     def apply_url_scheme_plists(self, rels):
         # Info.plist / InfoBazel.plist: only the legacy short scheme is rebranded.
         g = self.cfg['general']
@@ -755,6 +772,7 @@ def main(argv):
     # apply_polysrv.py after this script); only the branding cosmetics remain here.
     b.apply_appstore_config('build-system/appstore-configuration.json')
     b.apply_build('Telegram/BUILD')
+    b.apply_version_footer('submodules/DebugSettingsUI/Sources/DebugController.swift')
     b.apply_url_handling('submodules/UrlHandling/Sources/UrlHandling.swift')
     # After apply_url_handling, which already rebases UrlHandling.swift's own
     # two 'url: "https://t.me/\(query)"' sites and 't.me/iv?' - the sweep would

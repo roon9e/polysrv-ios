@@ -239,11 +239,22 @@ jobs:
             --destinationProfiles=build-system/fake-codesigning/profiles \
             --certsPath=build-system/fake-codesigning/certs
 
+      # generate_icons.py rewrites the icon PNGs from build-system/branding/logo.png.
+      # Without a logo it only prints "Skipping", yet the step still pays for a pip
+      # install and a network round trip on every build - so it runs only when the
+      # logo exists. The icons are build inputs: when the logo lands, the golden
+      # seed must run this step too (it does, with the same guard), and the Pillow
+      # pin must stay, because a different Pillow encodes different PNG bytes and
+      # would invalidate the icon actions on every build.
       - name: Generate app icons
         run: |
           set -euo pipefail
-          python3 -m pip install --upgrade --break-system-packages Pillow==11.3.0
           cd "$SOURCE_DIR"
+          if [ ! -f build-system/branding/logo.png ]; then
+            echo "no build-system/branding/logo.png; leaving the icons untouched"
+            exit 0
+          fi
+          python3 -m pip install --upgrade --break-system-packages Pillow==11.3.0
           python3 build-system/generate_icons.py
 
       - name: Build and verify IPA
@@ -355,54 +366,26 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-      # Best effort, and never fatal. Bazel already prints the whole breakdown
-      # on one line at the end of every build, so this reads that line rather
-      # than asking bazel to produce anything extra.
+      # Best effort, and never fatal: a report must never fail a build that
+      # succeeded. The script reads bazel's own closing "N processes: ..." line
+      # - asking for --execution_log_json_file instead buffered a record per
+      # action in the server's heap and OOMed a build that had already reported
+      # success, and it produced no log either, because the server died before
+      # flushing. Reading bazel's output cannot fail a build.
       #
-      # `worker` is the number that answers "what did branding cost". The
-      # workspace rc sets --strategy=SwiftCompile=worker, so worker actions are
-      # Swift compiles. internal and local are actions the disk cache never
-      # served: a constant baseline that does not move when branding changes, so
-      # only a change in `worker` means branding got more expensive.
-      #
-      # An earlier version asked bazel for --execution_log_json_file instead.
-      # That buffers per-action records in the server's heap and OOMed a build
-      # that had already reported success, turning a good IPA into a failed
-      # job, and it produced no log anyway because the server died before
-      # flushing. Reading bazel's own output cannot fail a build.
+      # `cacheable miss` is the number that matters: actions the disk cache did
+      # not serve, excluding bazel's uncacheable `internal` actions. It plays
+      # the role ccache's miss count plays in the desktop CI - when it is large,
+      # the golden cache no longer matches this tree, and the warning says so.
       - name: Report compile breakdown
         if: always()
         continue-on-error: true
         run: |
           set -uo pipefail
-          LOG="$RUNNER_TEMP/bazel-build.log"
-          if [ ! -s "$LOG" ]; then
-            echo "no bazel log at $LOG (the build step did not run, or failed before bazel spoke)"
-            exit 0
-          fi
-          line=$(grep -hoE '[0-9]+ processes: [0-9]+ disk cache hit.*' "$LOG" | tail -1 || true)
-          if [ -z "$line" ]; then
-            echo "bazel never printed a process summary; nothing to report"
-            exit 0
-          fi
-          echo "$line"
-          total=$(printf '%s' "$line" | sed -E 's/^([0-9]+) processes:.*/\1/')
-          hit=$(printf '%s' "$line" | sed -E 's/.*: ([0-9]+) disk cache hit.*/\1/')
-          worker=$(printf '%s' "$line" | grep -oE '[0-9]+ worker' | grep -oE '[0-9]+' || echo 0)
-          pct=0
-          [ "$total" -gt 0 ] && pct=$(( hit * 100 / total ))
-          echo "  total actions      : $total"
-          echo "  disk cache hits    : $hit (${pct}%)"
-          echo "  swift compiles run : $worker   <- branding cost"
-          {
-            echo "### Bazel compile breakdown"
-            echo
-            echo "| | |"
-            echo "|---|---|"
-            echo "| total actions | $total |"
-            echo "| disk cache hits | $hit (${pct}%) |"
-            echo "| swift compiles run (branding cost) | $worker |"
-          } >> "$GITHUB_STEP_SUMMARY"
+          python3 "$GITHUB_WORKSPACE/build-system/polysrv/bazel_action_stats.py" \
+            "$RUNNER_TEMP/bazel-build.log" \
+            --summary "$GITHUB_STEP_SUMMARY" \
+            --warn-above 300
 
       # The IPA is built and the cache has served its purpose, so empty both
       # paths before the job's post-job steps run. This is the ONLY thing
@@ -472,10 +455,18 @@ jobs:
           done
 
   # ---------------------------------------------------------------------------
-  # Golden cache seed. Compiles the tree with no branding applied at all, so the
-  # cache holds the longest prefix shared by every build of this branch: the
-  # untouched submodules and third-party work become reusable and only the
-  # modules branding actually edits get recompiled.
+  # Golden cache seed. Compiles the very tree the build job compiles - branding,
+  # the multiserver overlay and the regenerated provisioning profiles applied -
+  # so a branded build reuses its whole graph instead of only the third-party
+  # work. Seeding a generic tree only made sense for a builder that branded a
+  # different app on every run; this branch builds one brand, so the unbranded
+  # seed left every module branding touches (112 files across ~28 modules, and
+  # the Swift module keys chain from there) to be recompiled on every build.
+  #
+  # The API credentials are deliberately NOT injected here: they reach only
+  # BuildConfig's copts, so leaving them out costs about three actions
+  # (BuildConfig and the two links that consume it) and keeps the api_hash out
+  # of a cache entry that is retained for weeks.
   #
   # It never uploads a release. A build failure here is tolerated on purpose - a
   # signing or packaging failure still leaves a perfectly good compile cache
@@ -517,6 +508,46 @@ jobs:
           cp -R "$GITHUB_WORKSPACE" /Users/Shared/
           mv "/Users/Shared/$(basename "$GITHUB_WORKSPACE")" "$SOURCE_DIR"
 
+      # The same tree transforms the build job applies, in the same order, minus
+      # the API credentials - see the job comment. A cache entry is only useful
+      # for a build whose inputs it was made from.
+      - name: Apply branding and datacenter
+        run: |
+          set -euo pipefail
+          cd "$SOURCE_DIR"
+          python3 build-system/apply_branding.py build-system/branding/branding.json
+
+      - name: Apply PolySRV multiserver overlay
+        run: |
+          set -euo pipefail
+          cd "$SOURCE_DIR"
+          python3 build-system/polysrv/apply_polysrv.py
+
+      - name: Regenerate provisioning profiles
+        run: |
+          set -euo pipefail
+          cd "$SOURCE_DIR"
+          rm -rf build-system/fake-codesigning/profiles-backup
+          cp -R build-system/fake-codesigning/profiles build-system/fake-codesigning/profiles-backup
+          python3 build-system/Make/RegenerateProfilesForBundleId.py \
+            --configurationPath=build-system/appstore-configuration.json \
+            --sourceProfiles=build-system/fake-codesigning/profiles-backup \
+            --destinationProfiles=build-system/fake-codesigning/profiles \
+            --certsPath=build-system/fake-codesigning/certs
+
+      # The icons are build inputs, so the seed must generate them too whenever
+      # the build will. Same guard, same Pillow pin as the build job.
+      - name: Generate app icons
+        run: |
+          set -euo pipefail
+          cd "$SOURCE_DIR"
+          if [ ! -f build-system/branding/logo.png ]; then
+            echo "no build-system/branding/logo.png; leaving the icons untouched"
+            exit 0
+          fi
+          python3 -m pip install --upgrade --break-system-packages Pillow==11.3.0
+          python3 build-system/generate_icons.py
+
       - name: Configure repository cache
         continue-on-error: true
         run: |
@@ -524,7 +555,7 @@ jobs:
           mkdir -p "$REPO_CACHE_DIR"
           printf 'common --repository_cache=%s\n' "$REPO_CACHE_DIR" > "$HOME/.bazelrc"
 
-      - name: Compile unbranded tree
+      - name: Compile branded tree
         id: compile
         continue-on-error: true
         run: |
@@ -533,7 +564,9 @@ jobs:
 
           # Fixed build number: it reaches variables.bzl and therefore the
           # //Telegram packaging actions, and a stable value keeps them
-          # comparable between generations.
+          # comparable between generations. It differs from the build job's
+          # (build_number_offset + 1), which costs the version-stamped
+          # Info.plist actions and nothing else.
           python3 build-system/Make/ImportCertificates.py --path build-system/fake-codesigning/certs
           python3 -u build-system/Make/Make.py \
             --bazelUserRoot="$BAZEL_USER_ROOT" \
@@ -544,32 +577,20 @@ jobs:
             --configuration=release_arm64 \
             --buildNumber=1 2>&1 | tee "$RUNNER_TEMP/bazel-build.log"
 
-      # The seed is always a cold compile, so this is the denominator: the total
-      # number of actions a full build of this tree contains. A branded build's
-      # executed count divided by this is the reuse ratio. Recorded here because
-      # the seed is the only job that ever sees every action.
+      # The seed is always a cold compile, so this is the denominator: every
+      # action a full build of this tree contains, and every one of them a miss.
+      # A branded build's miss count divided by this is what it failed to reuse.
+      # No --warn-above here: a cold seed is *supposed* to miss everything.
       - name: Report total action count
         if: always()
         continue-on-error: true
         run: |
           set -uo pipefail
-          if [ ! -s "$RUNNER_TEMP/bazel-build.log" ]; then
-            echo "no bazel log; nothing to report"
-            exit 0
-          fi
-          total=$(grep -hoE '[0-9]+ processes: [0-9]+ disk cache hit.*' "$RUNNER_TEMP/bazel-build.log" | tail -1 || true)
-          if [ -z "$total" ]; then
-            echo "bazel never printed a process summary; nothing to report"
-            exit 0
-          fi
-          echo "golden seed executed $total"
-          {
-            echo "### Golden seed"
-            echo
-            echo '```'
-            echo "$total"
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
+          python3 "$GITHUB_WORKSPACE/build-system/polysrv/bazel_action_stats.py" \
+            "$RUNNER_TEMP/bazel-build.log" \
+            --summary "$GITHUB_STEP_SUMMARY" \
+            --label "Golden seed (cold: this is the denominator)" \
+            --warn-above 0
 
       - name: Measure generated caches
         id: size
