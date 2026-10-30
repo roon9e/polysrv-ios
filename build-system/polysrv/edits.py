@@ -21,6 +21,9 @@ RUST_ENGINE_SWIFT = "submodules/MTProtoRustEngine/Sources/MTProtoRustEngine/Rust
 AUTH_SEQUENCE_SWIFT = "submodules/AuthorizationUI/Sources/AuthorizationSequenceController.swift"
 APP_DELEGATE_SWIFT = "submodules/TelegramUI/Sources/AppDelegate.swift"
 SHARED_ACCOUNT_CONTEXT_SWIFT = "submodules/TelegramUI/Sources/SharedAccountContext.swift"
+LOGOUT_OPTIONS_SWIFT = "submodules/SettingsUI/Sources/LogoutOptionsController.swift"
+DELETE_ACCOUNT_OPTIONS_SWIFT = "submodules/SettingsUI/Sources/DeleteAccountOptionsController.swift"
+SETTINGS_SEARCHABLE_ITEMS_SWIFT = "submodules/SettingsUI/Sources/Search/SettingsSearchableItems.swift"
 TELEGRAM_BUILD = "Telegram/BUILD"
 
 EDITS = [
@@ -649,6 +652,88 @@ EDITS = [
             "            let _ = transaction.createAuth([.environment(AccountEnvironmentAttribute(environment: testingEnvironment ? .test : .production))])\n"
             "        }).start()\n"
             "    }\n"
+        ),
+    },
+    # PolySRV: a binding outlives the account it named, and a retained server (one
+    # an account holds on to after the published list dropped it) is held by the
+    # bindings. Prune both when the account set changes, so an unpublished server
+    # really does vanish once no account is bound to it.
+    {
+        "file": SHARED_ACCOUNT_CONTEXT_SWIFT,
+        "label": "SharedAccountContext.swift prune dead account bindings",
+        "old": (
+            "                    self.performAccountSettingsImportIfNecessary()\n"
+            "                }\n"
+        ),
+        "new": (
+            "                    self.performAccountSettingsImportIfNecessary()\n"
+            "                    \n"
+            "                    // PolySRV: drop the bindings of accounts that no longer exist,\n"
+            "                    // so a server the published list no longer carries does not linger\n"
+            "                    // just because a dead account still named it.\n"
+            "                    PolySrvServers.shared.pruneAccounts(keeping: Set(self.activeAccountsValue!.accounts.map { $0.0 }))\n"
+            "                }\n"
+        ),
+    },
+    # PolySRV: the account cap counts every server, as desktop's does
+    # (min(premiumCount + 20, 50)). Upstream's 3-or-4 limit belongs to the
+    # official cloud; here an account normally belongs to a different server, so
+    # the client's own cap has to be its own number.
+    {
+        "file": LOGOUT_OPTIONS_SWIFT,
+        "label": "LogoutOptionsController.swift PolySRV account cap",
+        "old": (
+            "            var maximumAvailableAccounts: Int = 3\n"
+            "            if accountAndPeer?.1.isPremium == true && !context.account.testingEnvironment {\n"
+            "                maximumAvailableAccounts = 4\n"
+            "            }\n"
+            "            var count: Int = 1\n"
+            "            for (accountContext, peer, _) in accountsAndPeers {\n"
+            "                if !accountContext.account.testingEnvironment {\n"
+            "                    if peer.isPremium {\n"
+            "                        maximumAvailableAccounts = 4\n"
+            "                    }\n"
+            "                    count += 1\n"
+            "                }\n"
+            "            }\n"
+        ),
+        "new": (
+            "            // PolySRV: the cap is desktop's and counts every server: 20\n"
+            "            // accounts, one more for each premium account, 50 at most.\n"
+            "            var premiumCount: Int = 0\n"
+            "            if !context.account.testingEnvironment && accountAndPeer?.1.isPremium == true {\n"
+            "                premiumCount += 1\n"
+            "            }\n"
+            "            var count: Int = 1\n"
+            "            for (accountContext, peer, _) in accountsAndPeers {\n"
+            "                if !accountContext.account.testingEnvironment {\n"
+            "                    if peer.isPremium {\n"
+            "                        premiumCount += 1\n"
+            "                    }\n"
+            "                    count += 1\n"
+            "                }\n"
+            "            }\n"
+            "            let maximumAvailableAccounts = PolySrvServers.maximumAccountCount(premiumCount: premiumCount)\n"
+        ),
+    },
+    {
+        "file": DELETE_ACCOUNT_OPTIONS_SWIFT,
+        "label": "DeleteAccountOptionsController.swift PolySRV account cap",
+        "old": (
+            "        let canAddAccounts = accountsAndPeers.1.count + 1 < maximumNumberOfAccounts\n"
+        ),
+        "new": (
+            "        let canAddAccounts = accountsAndPeers.1.count + 1 < PolySrvServers.maximumAccountCount(premiumCount: accountsAndPeers.1.filter { $0.1.isPremium }.count)\n"
+        ),
+    },
+    {
+        "file": SETTINGS_SEARCHABLE_ITEMS_SWIFT,
+        "label": "SettingsSearchableItems.swift PolySRV account cap",
+        "old": (
+            "        return accountsAndPeers.1.count + 1 < maximumNumberOfAccounts\n"
+        ),
+        "new": (
+            "        return accountsAndPeers.1.count + 1 < PolySrvServers.maximumAccountCount(premiumCount: accountsAndPeers.1.filter { $0.1.isPremium }.count)\n"
         ),
     },
     {
