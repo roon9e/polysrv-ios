@@ -63,7 +63,7 @@ it, and a manual run with `seed_cache` rebuilds the shared Bazel cache.
 ## Releases
 
 Builds are published as GitHub releases by that workflow — the official Telegram
-version plus this repository's build number, e.g. `PolySRV 13.1.1 (3732)`. The
+version plus this repository's build number, e.g. `PolySRV 13.1.2 (3732)`. The
 server list the picker offers is at
 
 ```

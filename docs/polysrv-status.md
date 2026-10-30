@@ -7,26 +7,75 @@ rationale for the overlay pipeline itself is in
 repo's general rules are in [`CLAUDE.md`](../CLAUDE.md) and
 [`AGENTS.md`](../AGENTS.md).
 
-Last updated: 2026-10-30, at HEAD `b1fdde6e7d`.
+Last updated: 2026-10-30, branch tip `d071b6178f`, on top of upstream
+`TelegramMessenger/Telegram-iOS@279f89e4d4` (**13.1.2**).
 
-## 1. Commits and what each one does
+## 0. Where the branch is now
 
-| commit | what | build |
-|---|---|---|
-| `51371c8331` | **the `-404` fix**: reset an account's datacenter state when its server scope changes | run #37 green, published |
-| `8ef8947a19` | golden seeds the *branded* tree; `bazel_action_stats.py` reports cacheable misses; icon step guarded on `logo.png`; Debug footer brands to `<app name> for iOS`; **API credentials injected from secrets** | run #38 build green (publish 403, see §6) |
-| `9e181bd543` | adding an account starts on the server picker; the choice is bound to the new account on its first network | pending at handoff |
-| `bcd1128046` | store/model/remote-list lifecycle: whole custom record incl. `logoPath`, an empty `servers.json` accepted, bound-but-unpublished servers retained, `canEditIdentity`, `accountsBound(toScope:)` | pending at handoff |
-| `a637c6b3a0` | account cap `min(premium + 20, 50)` (desktop's numbers) in the three places that read it; prune dead bindings | pending at handoff |
-| `9b4671f01a` | CI: builds in parallel, only the golden job serialized | pending at handoff |
-| `b1fdde6e7d` | picker sections + add/edit/delete + the add/edit form; branded root `README.md` | **not compiled yet** |
+* **Rebased onto upstream `master`.** The branch had been sitting on upstream
+  `fb0e62ba8a` (13.1.1); the 27 `polysrv` commits were replayed on top of
+  upstream `279f89e4d4`, which brings in three upstream "Cherry-pick fixes"
+  commits (MediaPlayer/TelegramCore/Wallet/WebUI/SiriIntents, `Account.swift`'s
+  `AccountStateManager` gain an `ignoresShortSentMessages` argument,
+  `SharedAccountContext.makeCreateBotScreen` gains `viaDeeplink:`) plus upstream's
+  **Bump version → 13.1.2**. `versions.json` is now `13.1.2`, so the next CI
+  build ships `PolySRV 13.1.2 (<build_number>)`. The overlay touches no upstream
+  source file, so the rebase was conflict-free and every anchored edit still
+  found its text (checked by applying `apply_polysrv.py` to the rebased tree).
+* **The branch is pushed with a force-push** (a rebase rewrites the previous 8
+  commits). Any other checkout of `polysrv` has to be reset to `origin/polysrv`.
+* **Two defects from the never-compiled picker commit (`2ee34b7f88`) are fixed:**
+  1. `fe860ffc67` — the delete confirmation called
+     `strongSelf.present(_:in:)` on the `AuthorizationSequenceController`, which
+     is a `NavigationController` (`UINavigationController`), **not** a
+     `ViewController`; it has no `present(_:in:)`. AuthorizationUI did not
+     compile (run `41061455746`/`41063018132`).
+  2. `d071b6178f` — the add/edit form and the delete confirmation were presented
+     at `.window(.root)`, a **local** overlay, which `NavigationController`
+     renders *below* the global overlay containers, i.e. below the picker that
+     opened them. They now go to the window's global overlay.
 
-**Unverified at handoff:** the Swift of `b1fdde6e7d` (the picker and the add/edit
-form) has never been compiled — there is no Swift toolchain on the Windows box
-this was written on, so CI is the only compile check. Runs #39, #40 and #41 were
-still building. **First job on the new machine: read run #41's build log.**
+## 1. Recent CI runs, and what each one actually failed on
 
-## 2. Behaviour now implemented
+| run | commit | outcome | reason |
+|---|---|---|---|
+| `41043831134` | reset DC state on server switch | **green**, published | — |
+| `41055722576` | golden seeds the branded tree | build green; **publish failed** | `publish` 403, §6 |
+| `41056618263` | add-account server picker | build green; **publish failed** | `publish` 403, §6 |
+| `41058779109` | CI: parallel builds | **green**, published | — |
+| `41061455746` | picker add/edit/delete | **build failed** | AuthorizationUI `present(_:in:)`, §0.1 |
+| `41063018132` | docs handoff | **build failed** | same AuthorizationUI error |
+| `40490244318` | weekly `master` keepalive | **failed** | not this branch: the scheduled `master` workflow's keepalive looks for `ios-v13-golden-*` entries that do not exist on this fork and its final `[ -d "$dir" ] && rm` returns 1 under `bash -e`. Ignore it; it is upstream's workflow, not `.github/workflows/build.yml`. |
+
+Nothing else has been built: the rebase, the rebase's upstream commits and the
+two fixes above have **not** been compiled yet. That is the next CI run.
+
+## 2. Fixed since the previous handoff, and still to verify on a device
+
+**Compile** — `fe860ffc67` (`presentOverlay` on the auth controller) fixes the
+only error CI reported: `AuthorizationSequenceController.swift:164` (in the
+applied tree) `extra argument 'in' in call / missing argument for parameter
+'animated' / cannot infer contextual base in reference to member 'window'`.
+Swift only ever offered `NavigationController.present(_:animated:completion:)`.
+
+**Layering** — `d071b6178f`. `Display/NavigationController` inserts its local
+`overlayContainers` *below* `globalOverlayContainerParent`
+(`NavigationController.swift`, the `overlayContainers` loop just after the
+`globalOverlayContainers` loop). The picker is a global overlay, so a form the
+picker presented at `.window(.root)` (→ `WindowContent.present(…, on: .root)` →
+`presentOverlay(inGlobal: false)`) was a local overlay rendered behind it. Both
+the form and the confirmation now use the global overlay
+(`presentInGlobalOverlay` / `presentOverlay(inGlobal: true)`), so they stack
+above the picker in list order.
+
+Neither of these is verified visually. `AGENTS.md` is explicit that a green
+build says nothing about what is drawn; when a machine with a simulator and the
+installed build is available, record the picker → Add / swipe Edit / swipe
+Delete → Save / Cancel sequence and judge the frames. The specific things to
+look for: the form appears *above* the list (not behind it), the keyboard does
+not cover the RSA-key field, and the confirmation appears above the form.
+
+## 3. Behaviour now implemented
 
 * **Server picker before adding an account.** `SharedAccountContextImpl.beginNewAuth`
   offers the picker first when a primary account already exists; the choice is
@@ -50,69 +99,85 @@ still building. **First job on the new machine: read run #41's build log.**
   "no longer published"; once nothing is bound to it, it is dropped.
 * **Account cap** `min(premiumCount + 20, 50)` — desktop's policy, not the
   official cloud's 3-or-4.
-* **Naming.** The Debug Settings version footer is branded `<app name> for iOS`.
-  The session name in Telegram's *Devices* list is the api_id's registered app
-  title, **not** client-controlled (the client sends no name: `initConnection`
-  carries apiId/deviceModel/systemVersion/appVersion only) — set it at
-  my.telegram.org.
+* **Naming.** The Debug Settings version footer is branded `<app name> for iOS`;
+  `versions.json` is now 13.1.2. The session name in Telegram's *Devices* list is
+  the api_id's registered app title, **not** client-controlled (the client sends
+  no name: `initConnection` carries apiId/deviceModel/systemVersion/appVersion
+  only) — set it at my.telegram.org.
 
-## 3. Environment on the new machine
+## 4. Environment
 
-* Branch `polysrv`, remote `origin` = `https://github.com/roon9e/polysrv-ios`.
-* Git identity used for commits here: `roon9e <44918054+roon9e@users.noreply.github.com>`
-  (already the repo's `user.name`/`user.email`).
-* **`gh` CLI is authenticated as `roon9e`** (repo scope) — the fastest way to
-  inspect builds:
+* Branch `polysrv`, remote `origin` = `https://github.com/roon9e/polysrv-ios`,
+  and `upstream` = `https://github.com/TelegramMessenger/Telegram-iOS`.
+* Git identity used for commits here: `roon9e <44918054+roon9e@users.noreply.github.com>`.
+* **`gh` CLI is authenticated as `roon9e`** (repo scope):
   ```sh
   gh run list --branch polysrv --limit 6
   gh run view <run-id>                        # job and step outcomes
   gh run view --job=<job-id>                  # one job's steps
-  gh run view --log --job=<job-id> | grep ... # the numbers / the failure
+  gh run view --log-failed=<job-id> | grep -E ": error:|ERROR:"   # the failure
   gh run rerun <run-id> --failed
   ```
-* **No Swift toolchain here.** Validate non-Swift things locally:
+* **No Swift toolchain on the Windows box this is written on.** Validate non-Swift
+  things locally instead:
   ```sh
-  python3 -c "import ast; ast.parse(open('build-system/polysrv/edits.py').read())"
-  python3 build-system/polysrv/bazel_action_stats.py <some-bazel-log>   # report only
-  # every anchored edit must still find its upstream text:
-  python3 build-system/polysrv/apply_polysrv.py --check                 # on a PRISTINE tree
+  python -c "import ast; ast.parse(open('build-system/polysrv/edits.py').read())"
+  python build-system/polysrv/apply_polysrv.py .            # then --revert: it patches the tree
+  python build-system/polysrv/bazel_action_stats.py <bazel-log>   # report only
   ```
+  `apply_polysrv.py` is the real anchor check: run it on a pristine checkout and
+  demand no `MISSING ANCHOR`; `--revert` restores the tree (it git-checkouts the
+  edited files and deletes the overlay copies).
 * **Secrets** (repo → Settings → Secrets and variables → Actions):
-  `TELEGRAM_API_ID`, `TELEGRAM_API_HASH` (read by the `Inject API credentials`
-  step). They are **not** committed; the committed
-  `build-system/appstore-configuration.json` keeps Telegram's public placeholder.
-* Build = `.github/workflows/build.yml`, triggered by a push to `polysrv` (and
-  `workflow_dispatch` for a cache seed or a probe). macOS runners cap at 5
-  concurrent jobs.
+  `TELEGRAM_API_ID`, `TELEGRAM_API_HASH` (read by `Inject API credentials`).
+  Repo → Settings → Actions → Workflow permissions must stay **Read and write**
+  for `publish` to create a release (§6).
+* Build = `.github/workflows/build.yml`, on a push to `polysrv` (and
+  `workflow_dispatch` for a cache seed or a probe); macOS runners cap at 5
+  concurrent jobs. Pushes build **in parallel**; only the `golden` seed is
+  serialized.
 * On-device logs: the overlay forces file logging and enables file sharing, so
   **Files app → PolySRV → `polysrv-logs`**.
 
-## 4. Immediate next steps
+## 5. Immediate next steps
 
-1. **Check run #41** (`Picker: add, edit and delete servers in place`) — the
-   first compile of the picker/add/edit form. On failure:
-   `gh run view --log-failed <run-id>` and fix; the likely classes are a missing
-   import, a wrong Display/ASDisplayNode API, or a `theme.list.*` member that does
-   not exist.
+1. **Watch the CI run for the pushed tip.** It is the first compile of the
+   picker's add/edit/delete (the overlay sources, `edits.py`'s new helper block)
+   and of the rebase. On failure: `gh run view --log-failed <id>`.
 2. **Seed the cache once** — `workflow_dispatch` with `seed_cache: true`. Until
-   then every build pays the branding cost (measured on #38, *before* the change:
-   `9660 actions: 6851 disk cache hit, 1735 internal, 588 worker, 486 local` →
-   `6851/7925 cacheable served (86%), 1074 misses`; after a branded seed expect
-   `worker` and `misses` near zero). The reporter warns above 300 misses.
-3. **Device-test the new flows** on the next IPA (artifacts are on the run page
-   even if publish fails):
+   then every build pays the branding cost. The reporter warns above 300
+   cacheable misses; after a branded seed expect `worker` and `misses` near zero.
+3. **Device-test the flows** on the next IPA (artifacts are on the run page even
+   if publish fails), and record the animations/frames per `AGENTS.md`:
    * Settings → Add Account → the picker appears first; log line
      `PolySRV new account on server <id> (<host:port>)`.
    * Add a server by hand → it appears under Your servers → tapping it signs in.
+     **The form must be visible over the picker** (§2).
    * Swipe a custom row → Edit / Delete; deleting a bound server names the
-     accounts and logs them out.
+     accounts and logs them out, with the confirmation above the picker.
    * Remove a server from `gh-pages/servers.json` → it disappears from Published,
      unless an account is bound to it (then it stays, marked).
    * On a server switch: `reset datacenter state for scope <host:port>` then
      `preparing reqPq` / `completeWithAuthKey` — the `-404` fix.
    * Adding a 5th+ account is now allowed (cap 20).
 
-## 5. TODOs, by file
+## 6. The publish 403
+
+Two runs (`41055722576`, `41056618263`) failed **only** in the `publish` job:
+`HTTP 403: Resource not accessible by integration` on `POST /releases`. The
+token in those logs already carries `Contents: write` — the workflow has had
+`permissions: contents: write` on `publish` all along, and the run between them
+(`41058779109`, same workflow, same job) published fine. The cause recorded at
+the previous handoff was the repository's *default* Actions permission being set
+to read-only (`roon9e/polysrv-ios` `default_workflow_permissions: "read"` while
+`polysrv-desktop` was `"write"`), changed outside the workflow and since
+re-enabled. It is currently `"write"` (checked with
+`gh api repos/roon9e/polysrv-ios/actions/permissions/workflow`). If it regresses:
+publish with a fine-grained PAT (`PUBLISH_TOKEN`, Contents: read and write) in
+the publish job's `GH_TOKEN` rather than loosening the repo setting, or just
+`gh run rerun <id> --failed` the publish job.
+
+## 7. TODOs, by file
 
 * `build-system/polysrv/overlay/.../PolySrv/PolySrvServerSelectController.swift`
   * Nav bar: the header is still hand-rolled (title + left button + Add). A real
@@ -141,31 +206,21 @@ still building. **First job on the new machine: read run #41's build log.**
   cannot solve it (the reCAPTCHA Enterprise site key it returns is bound to
   Telegram's own bundle id → `errorInvalidPackageName`). Normal logins do not hit
   it; a web-view reCAPTCHA flow would be the fix.
-* Optional: publish with a fine-grained PAT (`PUBLISH_TOKEN`, Contents: read and
-  write) and set the publish job's `GH_TOKEN` to it, so the repo can keep
-  read-only workflow permissions (see §6).
 
-## 6. The publish 403 (fixed at handoff)
-
-`publish` failed with `HTTP 403: Resource not accessible by integration` on
-`POST /releases`. The repository's Actions default was read-only:
-
-```
-roon9e/polysrv-ios      default_workflow_permissions: "read"
-roon9e/polysrv-desktop  default_workflow_permissions: "write"
-```
-
-No commit of ours touched the publish job (`git diff 51371c8331..HEAD --
-.github/workflows/build.yml` shows no publish/permissions lines), and #33–#37
-published fine earlier the same day, so the setting changed outside the workflow.
-The owner has since re-enabled *Read and write permissions*. If it regresses
-again, use the PAT option in §5 instead of loosening the repo setting.
-
-## 7. Landmines worth remembering
+## 8. Landmines worth remembering
 
 * **Never edit upstream files in the working tree.** The feature lives in
   `build-system/polysrv/overlay/**` and `build-system/polysrv/edits.py`, applied
   by `apply_polysrv.py` at build time. A missing anchor is a hard failure (good).
+* **`presentOverlay`, not `present`, above the picker.** The picker is a *global*
+  overlay, so anything that must appear over it has to be a global overlay too
+  (`ViewController.presentInGlobalOverlay`, or
+  `NavigationController.presentOverlay(inGlobal: true)`). `.window(.root)` is a
+  local overlay and renders **below** the global containers.
+* **`AuthorizationSequenceController` is a `NavigationController`, not a
+  `ViewController`** — it has `presentOverlay`/`currentWindow` but no
+  `present(_:in:)`. `Display.NavigationController` also traps on a UIKit-style
+  `present(_:animated:)` from a non-UIKit context; present through the overlay.
 * **A `count: "all"` edit is not idempotent against an already-patched tree:** its
   `old` anchor still matches after the first application, so re-applying to a
   patched tree duplicates lines. Always start from a pristine checkout (CI does).
@@ -174,17 +229,16 @@ again, use the PAT option in §5 instead of loosening the repo setting.
   a field that is dropped there is silently lost when the app data updates.
 * **Scope is `host:port`, lowercased**, and the reset is per account, so the same
   host on two ports is two servers and the same address under two ids is one.
-* **Keep the golden cache key as `versions.json` + `.bazelrc`.** Adding branding
-  or the overlay to it would throw away the third-party prefix on every branding
-  edit; the disk cache is content-addressed, so a change simply misses until the
-  next seed.
+* **Keep the golden cache key as `versions.json` + `.bazelrc`.** The version bump
+  to 13.1.2 changes that hash, so the next build is a *cold* one (all misses)
+  until the new key is seeded — expected, not a regression.
 * **The seed deliberately does not inject credentials** (they reach only
   `BuildConfig`'s copts, ~3 actions) so the retained cache never holds the
   api_hash.
-* **Criticalities of the original bug** (so it is not re-derived): the app makes
-  Telegram permanent keys for the default DCs *before* the picker is even shown;
-  a custom server then presented one of those keys, the server answered
+* **Criticalities of the original `-404` bug** (so it is not re-derived): the app
+  makes Telegram permanent keys for the default DCs *before* the picker is even
+  shown; a custom server then presented one of those keys, the server answered
   `protocol error -404` / `missing key <id> selector 0 … canResetAuthData: false`,
   and `MTProto.m`'s `default:` branch calls `checkIfLoggedOut:`, which the overlay
   disables for a locked server — so nothing ever replaced the key. The reset in
-  §2 is the fix.
+  §3 is the fix.
