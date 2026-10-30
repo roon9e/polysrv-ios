@@ -46,12 +46,17 @@ on:
 permissions:
   contents: read
 
-# One build at a time. A seed deliberately overlaps nothing: it rotates the
-# entry every build reads from, so a concurrent builder could restore a
-# generation that is being replaced underneath it.
-concurrency:
-  group: ios-polysrv-${{ github.repository }}
-  cancel-in-progress: false
+# Builds run in parallel, deliberately: pushing several commits should not queue
+# them one behind another. That is safe here because the build job only ever
+# restores the golden cache (actions/cache/restore) and empties its own paths
+# before its post-job steps, so it cannot write one, and because a build that
+# restores a generation a seed is replacing underneath it merely degrades to a
+# cold compile - the outcome a missing entry already has.
+#
+# Only the writer is serialized, by the group on the golden job itself. (A
+# workflow-level group would serialize every run, which is what this avoids:
+# five pushes would be one build plus four queued. cancel-in-progress: true
+# would be the opposite trade - keep only the newest and cancel the rest.)
 
 env:
   SOURCE_DIR: /Users/Shared/telegram-ios
@@ -474,6 +479,13 @@ jobs:
   # ---------------------------------------------------------------------------
   golden:
     if: github.event_name == 'workflow_dispatch' && inputs.seed_cache
+    # One seed at a time: it rotates the entry every build reads from, so two
+    # seeds overlapping would each save a generation the other is replacing.
+    # A second one waits (cancel-in-progress: false) rather than cancelling a
+    # rotation halfway through.
+    concurrency:
+      group: ios-polysrv-golden-writer
+      cancel-in-progress: false
     runs-on: xcode-27
     timeout-minutes: 300
     permissions:
