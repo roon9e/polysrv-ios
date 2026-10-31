@@ -66,8 +66,6 @@ private final class PolySrvServerSelectControllerNode: ASDisplayNode {
         self.view.backgroundColor = self.theme.list.plainBackgroundColor
         self.header.backgroundColor = .clear
 
-        self.view.addSubview(self.header)
-
         self.titleLabel.text = "Servers"
         self.titleLabel.font = UIFont.systemFont(ofSize: 17.0, weight: .semibold)
         self.titleLabel.textColor = self.theme.list.itemPrimaryTextColor
@@ -89,6 +87,10 @@ private final class PolySrvServerSelectControllerNode: ASDisplayNode {
 
         self.tableView.backgroundColor = self.theme.list.plainBackgroundColor
         self.view.addSubview(self.tableView)
+        // The header (transparent, carrying the glass bubbles) is added last so
+        // it draws over the list and the bubble shadows are not clipped at the
+        // list's top edge.
+        self.view.addSubview(self.header)
     }
 
     func setDiagnostic(_ text: String) {
@@ -102,8 +104,8 @@ private final class PolySrvServerSelectControllerNode: ASDisplayNode {
         let headerHeight = headerTop + barHeight + diagnosticHeight
         self.header.frame = CGRect(x: 0.0, y: 0.0, width: size.width, height: headerHeight)
 
-        let buttonSize: CGFloat = 44.0
-        let bubbleSize: CGFloat = 36.0
+        let buttonSize: CGFloat = 52.0
+        let bubbleSize: CGFloat = 44.0
         let bubbleInset = floor((buttonSize - bubbleSize) / 2.0)
         let bubbleY = headerTop + floor((barHeight - bubbleSize) / 2.0)
         let isDark = self.view.traitCollection.userInterfaceStyle == .dark
@@ -450,14 +452,13 @@ public final class PolySrvServerSelectController: ViewController, UITableViewDat
     private func logo(for server: PolySrvServer) -> UIImage? {
         if server.isTelegram {
             // The real Telegram icon - white paper plane on a blue circle - from
-            // the app's own app-icon assets, the same lookup the app-icon picker
-            // uses (ThemeSettingsAppIconItem). Falls back to the mark and then to
-            // an SF Symbol if it is ever unavailable.
+            // the app's own app-icon assets (ThemeSettingsAppIconItem's lookup),
+            // drawn into a circle at the same size as a custom server's avatar.
             if let logo = UIImage(named: "BlueFilledIcon", in: getAppBundle(), compatibleWith: nil) {
-                return logo
+                return PolySrvServerSelectController.circularImage(logo, size: PolySrvServerSelectController.avatarSize)
             }
             if let logo = UIImage(bundleImageName: "Chat/Context Menu/Telegram") {
-                return logo
+                return PolySrvServerSelectController.circularImage(logo, size: PolySrvServerSelectController.avatarSize)
             }
             let plane = UIImage(systemName: "paperplane.fill")
             return plane?.withTintColor(self.theme.list.itemAccentColor, renderingMode: .alwaysOriginal)
@@ -481,8 +482,25 @@ public final class PolySrvServerSelectController: ViewController, UITableViewDat
         UIColor(red: 0.35, green: 0.62, blue: 0.78, alpha: 1.0),
     ]
 
+    /// One avatar size for every row: a custom server's letter circle and the
+    /// Telegram mark are the same size and shape.
+    private static let avatarSize = CGSize(width: 36.0, height: 36.0)
+
+    /// Draw any image into a circle of `size` (aspect-filled).
+    private static func circularImage(_ image: UIImage, size: CGSize) -> UIImage {
+        let renderer = UIGraphicsImageRenderer(size: size)
+        return renderer.image { context in
+            let rect = CGRect(origin: .zero, size: size)
+            context.cgContext.addEllipse(in: rect)
+            context.cgContext.clip()
+            let scale = max(size.width / max(1.0, image.size.width), size.height / max(1.0, image.size.height))
+            let drawSize = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+            image.draw(in: CGRect(x: (size.width - drawSize.width) / 2.0, y: (size.height - drawSize.height) / 2.0, width: drawSize.width, height: drawSize.height))
+        }
+    }
+
     private static func avatarImage(initial: String) -> UIImage {
-        let size = CGSize(width: 36.0, height: 36.0)
+        let size = PolySrvServerSelectController.avatarSize
         var hash: UInt64 = 1469598103934665603
         for byte in initial.utf8 {
             hash ^= UInt64(byte)

@@ -139,8 +139,10 @@ private final class PolySrvServerEditControllerNode: ASDisplayNode {
     override func didLoad() {
         super.didLoad()
 
-        self.view.backgroundColor = self.theme.list.modalPlainBackgroundColor
-        self.header.backgroundColor = self.theme.list.modalPlainBackgroundColor
+        // The app's list background (grey), so each row's white block is a visible
+        // field box.
+        self.view.backgroundColor = self.theme.list.plainBackgroundColor
+        self.header.backgroundColor = .clear
         self.contentView.backgroundColor = .clear
         self.scrollView.backgroundColor = .clear
 
@@ -156,6 +158,11 @@ private final class PolySrvServerEditControllerNode: ASDisplayNode {
         self.hostRow.field.placeholder = "example.com"
         self.portRow.field.placeholder = "443"
         self.mainDcRow.field.placeholder = "2"
+
+        // The RSA key is a tall box; give its text area a visible field surface.
+        self.keyRow.textView.backgroundColor = self.theme.list.plainBackgroundColor
+        self.keyRow.textView.layer.cornerRadius = 8.0
+        self.keyRow.textView.clipsToBounds = true
 
         self.titleLabel.font = UIFont.systemFont(ofSize: 17.0, weight: .semibold)
         self.titleLabel.textColor = self.theme.list.itemPrimaryTextColor
@@ -200,12 +207,14 @@ private final class PolySrvServerEditControllerNode: ASDisplayNode {
         self.header.addSubview(self.cancelButton)
         self.header.addSubview(self.saveButton)
         self.header.addSubview(self.messageLabel)
-        self.view.addSubview(self.header)
         self.view.addSubview(self.scrollView)
         self.scrollView.addSubview(self.contentView)
         for row in self.rows {
             self.contentView.addSubview(row)
         }
+        // Added last so the transparent header (and its glass bubbles) draw over
+        // the scroll view, whose top edge would otherwise clip the shadows.
+        self.view.addSubview(self.header)
     }
 
     func apply(server: PolySrvServer?) {
@@ -253,8 +262,8 @@ private final class PolySrvServerEditControllerNode: ASDisplayNode {
         self.titleLabel.sizeToFit()
         self.titleLabel.frame = CGRect(x: floor((size.width - self.titleLabel.bounds.width) / 2.0), y: topInset + floor((barHeight - self.titleLabel.bounds.height) / 2.0), width: self.titleLabel.bounds.width, height: self.titleLabel.bounds.height)
 
-        let buttonSize: CGFloat = 44.0
-        let bubbleSize: CGFloat = 36.0
+        let buttonSize: CGFloat = 52.0
+        let bubbleSize: CGFloat = 44.0
         let bubbleInset = floor((buttonSize - bubbleSize) / 2.0)
         let bubbleY = topInset + floor((barHeight - bubbleSize) / 2.0)
         let isDark = self.view.traitCollection.userInterfaceStyle == .dark
