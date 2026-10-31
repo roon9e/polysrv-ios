@@ -76,6 +76,87 @@ def rewrite_share_links(text, host):
     return text, count
 
 
+# Links the app *shows*, whose host is resolved at runtime instead of being baked
+# in. Upstream spells these out as t.me literals and the sweep below would bake
+# the brand host into them - which is what made one build show polysrv.ru for
+# every server, the official cloud included.
+#
+# A server broadcasts its own public URL: help.getConfig's me_url_prefix is
+# "https://t.me/" for the official cloud and whatever a private server names (or
+# nothing). The multiserver runtime keeps it (PolySrvServers, filled in by
+# apply_polysrv's ManagedConfigurationUpdates edit) and PolySrvPublicLink.host
+# hands it back here; the branded host stays as the fallback for a server that
+# names none.
+#
+# These run BEFORE the generic sweep, which then finds no t.me left in them. Each
+# is anchored rather than swept: a wrong rewrite here would hand the user a link
+# that never opens, so a moved line has to fail the build instead.
+def runtime_host_rewrites(host):
+    runtime = '\\(PolySrvPublicLink.host ?? "' + host + '")'
+    return (
+        (
+            'submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreenOpenPeerInfoContextMenu.swift',
+            'text = "https://t.me/\\(addressName)"',
+            'text = "https://' + runtime + '/\\(addressName)"',
+        ),
+        (
+            'submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreenOpenPeerInfoContextMenu.swift',
+            'text = "https://t.me/@id\\(peer.id.id._internalGetInt64Value())"',
+            'text = "https://' + runtime + '/@id\\(peer.id.id._internalGetInt64Value())"',
+        ),
+        (
+            'submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoProfileItems.swift',
+            'let linkText = "https://t.me/\\(mainUsername)/\\(threadId)"',
+            'let linkText = "https://' + runtime + '/\\(mainUsername)/\\(threadId)"',
+        ),
+        (
+            'submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoProfileItems.swift',
+            'text: "https://t.me/\\(mainUsername)",',
+            'text: "https://' + runtime + '/\\(mainUsername)",',
+        ),
+        (
+            'submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreen.swift',
+            'strongSelf.openShareLink(url: "https://t.me/\\(username)")',
+            'strongSelf.openShareLink(url: "https://' + runtime + '/\\(username)")',
+        ),
+        (
+            'submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreen.swift',
+            'self.openUrl(url: "https://t.me/nft/\\(slug)", concealed: false, external: false)',
+            'self.openUrl(url: "https://' + runtime + '/nft/\\(slug)", concealed: false, external: false)',
+        ),
+        (
+            'submodules/TelegramUI/Components/Chat/ChatQrCodeScreen/Sources/ChatQrCodeScreen.swift',
+            'codeLink = "https://t.me/\\(peer.addressName ?? "")"',
+            'codeLink = "https://' + runtime + '/\\(peer.addressName ?? "")"',
+        ),
+        (
+            'submodules/TelegramUI/Components/Chat/ChatQrCodeScreen/Sources/ChatQrCodeScreen.swift',
+            'codeLink = "https://t.me/+\\(peer.phone ?? "")"',
+            'codeLink = "https://' + runtime + '/+\\(peer.phone ?? "")"',
+        ),
+        (
+            'submodules/TelegramUI/Components/Chat/ChatQrCodeScreen/Sources/ChatQrCodeScreen.swift',
+            'codeLink = "https://t.me/c/\\(peer.id.id._internalGetInt64Value())"',
+            'codeLink = "https://' + runtime + '/c/\\(peer.id.id._internalGetInt64Value())"',
+        ),
+        (
+            'submodules/TelegramUI/Components/Chat/ChatQrCodeScreen/Sources/ChatQrCodeScreen.swift',
+            'link = "t.me/\\(addressName)/\\(message.id.id)"',
+            'link = "' + runtime + '/\\(addressName)/\\(message.id.id)"',
+        ),
+        (
+            'submodules/SettingsUI/Sources/UsernameSetupController.swift',
+            'ShareControllerParams(subject: .url("https://t.me/\\(currentAddressName)")',
+            'ShareControllerParams(subject: .url("https://' + runtime + '/\\(currentAddressName)")',
+        ),
+        (
+            'submodules/ShareController/Sources/ShareController.swift',
+            'url = "https://t.me/\\(addressName)/\\(message.id.id)"',
+            'url = "https://' + runtime + '/\\(addressName)/\\(message.id.id)"',
+        ),
+    )
+
+
 # ------- tg:// scheme, replaced outright -------
 #
 # Unlike a t.me host, the tg scheme is a system-wide URL scheme that official
@@ -493,6 +574,20 @@ class Branding:
             write(self.path(rel), text.replace(old, new, 1))
             self.report(True, 'dual-host scanner line in ' + rel)
 
+        # Before the sweep, so the lines below have no t.me left for it to find.
+        runtime_hosts = 0
+        for rel, old, new in runtime_host_rewrites(host):
+            text = read(self.path(rel))
+            if new in text:
+                runtime_hosts += 1
+                continue
+            if old not in text:
+                self.report(False, 'runtime-host link in ' + rel)
+                continue
+            write(self.path(rel), text.replace(old, new, 1))
+            runtime_hosts += 1
+            self.report(True, 'runtime-host link in ' + rel)
+
         for rel in self.link_sources():
             if rel in dual:
                 continue
@@ -505,6 +600,7 @@ class Branding:
 
         print('[apply_branding] ok: share links in %d file(s), %d link literal(s) -> %s'
               % (swept_files, swept_links, host))
+        print('[apply_branding] ok: %d shown link(s) take their host from the server' % runtime_hosts)
 
     def verify_share_links(self):
         """Fail the build unless the sweep left exactly the intended residue.
@@ -541,6 +637,13 @@ class Branding:
         for rel, _old, new in dual:
             if new not in read(self.path(rel)):
                 self.report(False, 'dual-host scanner line missing in ' + rel)
+
+        # And each link that takes its host from the server: if upstream moves
+        # one, the file silently keeps a t.me literal (or, worse, a half-rewritten
+        # line), which is exactly what this fails on.
+        for rel, _old, new in runtime_host_rewrites(self.cfg['general']['host']):
+            if new not in read(self.path(rel)):
+                self.report(False, 'runtime-host link missing in ' + rel)
 
         # The upstream hosts have to survive as fallbacks, or an inbound t.me
         # link resolves to .externalUrl and opens in Safari instead of the app.
