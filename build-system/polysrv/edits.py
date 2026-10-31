@@ -29,6 +29,7 @@ SETTINGS_ACCOUNTS_ITEMS_SWIFT = "submodules/TelegramUI/Components/PeerInfo/PeerI
 SETTINGS_ACCOUNTS_ACTIONS_SWIFT = "submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreenSettingsActions.swift"
 PEERINFO_SCREEN_SWIFT = "submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreen.swift"
 LOG_SWIFT = "submodules/TelegramCore/Sources/Utils/Log.swift"
+MANAGED_CONFIGURATION_SWIFT = "submodules/TelegramCore/Sources/State/ManagedConfigurationUpdates.swift"
 TELEGRAM_BUILD = "Telegram/BUILD"
 
 EDITS = [
@@ -1174,6 +1175,25 @@ EDITS = [
             "        } else {\n"
             "            LoggingSettings.defaultSettings = LoggingSettings(logToFile: false, logToConsole: false, redactSensitiveData: true)\n"
             "        }\n"
+        ),
+    },
+    # PolySRV: the server says what its own public URL is (help.getConfig's
+    # me_url_prefix: t.me for the official cloud, whatever a private server names).
+    # The links this client shows are labelled in apply_branding.py and read it
+    # there; this is what fills it in.
+    {
+        "file": MANAGED_CONFIGURATION_SWIFT,
+        "label": "ManagedConfigurationUpdates.swift take the server's public URL",
+        "old": (
+            "                    var addressList: [Int: [MTDatacenterAddress]] = [:]\n"
+        ),
+        "new": (
+            "                    // PolySRV: the server's own public URL prefix, which\n"
+            "                    // its links are built from (the official cloud names\n"
+            "                    // t.me; a private server names its own or none).\n"
+            "                    PolySrvServers.shared.setBroadcastLinkPrefix(configData.meUrlPrefix)\n"
+            "                    \n"
+            "                    var addressList: [Int: [MTDatacenterAddress]] = [:]\n"
         ),
     },
     {

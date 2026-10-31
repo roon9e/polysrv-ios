@@ -65,6 +65,8 @@ public final class PolySrvServers {
     /// any account exists) may be handed to the first account that is built.
     private var pendingServerOwner: String?
     private var lastRemoteFetch: Date?
+    /// The `me_url_prefix` the running account's server last broadcast.
+    private var broadcastLinkPrefix: String?
 
     private let configKey = "polysrv.servers.config"
     private let configDateKey = "polysrv.servers.config.date"
@@ -74,6 +76,7 @@ public final class PolySrvServers {
     private let retainedKey = "polysrv.servers.retained"
     private let pendingKey = "polysrv.servers.pending"
     private let pendingOwnerKey = "polysrv.servers.pendingOwner"
+    private let broadcastLinkPrefixKey = "polysrv.servers.broadcastLinkPrefix"
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -117,6 +120,7 @@ public final class PolySrvServers {
         self.pendingServerId = self.defaults.string(forKey: self.pendingKey)
         self.pendingServerOwner = self.defaults.string(forKey: self.pendingOwnerKey)
         self.lastRemoteFetch = self.defaults.object(forKey: self.configDateKey) as? Date
+        self.broadcastLinkPrefix = self.defaults.string(forKey: self.broadcastLinkPrefixKey)
     }
 
     /// The decoded envelope, or nil when the bytes are not a server list at
@@ -268,6 +272,54 @@ public final class PolySrvServers {
         self.appliedScopes[self.accountKey(accountId)] = scope
         self.defaults.set(try? JSONEncoder().encode(self.appliedScopes), forKey: self.appliedScopesKey)
         self.lock.unlock()
+    }
+
+    // MARK: - The server's public URL
+
+    /// The public URL prefix the server of the account in use broadcasts
+    /// (`me_url_prefix` in `help.getConfig`). The official cloud sends its own
+    /// t.me one; a private server sends one of its own or none at all.
+    ///
+    /// Only the account whose network is running is handed a config - the rest
+    /// are paused - and that is the account on screen, so the last prefix stored
+    /// is the one whose links are being looked at. It is kept across launches, so
+    /// a link shown before the first config of a session still has a host.
+    public func setBroadcastLinkPrefix(_ prefix: String) {
+        self.lock.lock()
+        self.broadcastLinkPrefix = prefix
+        self.defaults.set(prefix, forKey: self.broadcastLinkPrefixKey)
+        self.lock.unlock()
+    }
+
+    /// The host to build a link with, from what the server broadcast: "t.me" for
+    /// the official cloud, the private server's own host when it names one, and
+    /// nil when there is nothing to go on - the caller then keeps the host this
+    /// build was branded with.
+    public var broadcastLinkHost: String? {
+        self.lock.lock()
+        let prefix = self.broadcastLinkPrefix
+        self.lock.unlock()
+        return PolySrvServers.host(fromUrlPrefix: prefix)
+    }
+
+    /// The host part of a `me_url_prefix`. The field is a URL ("https://t.me/"),
+    /// but a bare host, a scheme-less "t.me/" and a host with a port are accepted
+    /// too, because a private server may write any of them.
+    public static func host(fromUrlPrefix prefix: String?) -> String? {
+        guard var value = prefix?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else {
+            return nil
+        }
+        if let range = value.range(of: "://") {
+            value = String(value[range.upperBound...])
+        }
+        if let index = value.firstIndex(of: "/") {
+            value = String(value[..<index])
+        }
+        if let index = value.firstIndex(of: ":") {
+            value = String(value[..<index])
+        }
+        value = value.trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        return value.isEmpty ? nil : value
     }
 
     /// Bind a pending selection to the exact account it was chosen for, so it
@@ -492,5 +544,21 @@ public final class PolySrvServers {
                 completion?()
             }
         }.resume()
+    }
+}
+
+/// The host a link should show, as the server itself declares it.
+///
+/// Upstream builds every link out of a literal ("https://t.me/…") and this fork's
+/// branding sweep rewrites that literal to the brand host, so one build carried
+/// one host for every server. The host a server broadcasts takes precedence
+/// instead: the official cloud names t.me and a private server names its own (or
+/// nothing). The labelled sites in apply_branding.py read it here and fall back
+/// to the branded host when it is nil.
+public enum PolySrvPublicLink {
+    /// nil: the server named no public URL, so the caller keeps the host this
+    /// build was branded with.
+    public static var host: String? {
+        return PolySrvServers.shared.broadcastLinkHost
     }
 }
