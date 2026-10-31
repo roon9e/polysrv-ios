@@ -9,16 +9,32 @@ name: iOS build
 # never committed into the tree, so the same commit can be rebuilt for a
 # different host by editing branding.json alone.
 #
-# The golden cache belongs to this branch alone: a toolchain or tree bump changes
-# every action key, so an older generation cannot serve a single action of it. The
-# ios-polysrv- key prefix keeps generations unmistakably separate.
+# Two branches, deliberately:
+#
+#   master  the release branch: upstream plus one squashed commit, and the
+#           repository's default branch. It owns the golden cache - a cache entry
+#           is readable by the branch that wrote it and by every branch when it
+#           belongs to the default branch - so the seed belongs here and a
+#           re-seed after a toolchain or tree bump serves every other branch.
+#           It publishes a release, and builds only on demand: a branch with no
+#           cache of its own compiles cold, so the seed goes first and the build
+#           that follows it is the fast one.
+#   dev     the working branch. It builds on push, uploads the IPA as a workflow
+#           artifact, and never publishes a release.
+#
+# A toolchain or tree bump changes every action key, so an older generation cannot
+# serve a single action of it. The ios-polysrv- key prefix keeps generations
+# unmistakably separate.
 #
 # The macOS jobs run on the xcode-27 image (macOS 27 / Xcode 27.x): versions.json
 # pins Xcode 27.1, which macos-latest (macOS 26, Xcode <=26.6) does not carry.
 on:
   push:
+    # Only the working branch builds on push. master is built on demand, and only
+    # once its golden cache exists (see the branch note above), so a push there
+    # never spends an hour on a cold compile.
     branches:
-      - polysrv
+      - dev
   workflow_dispatch:
     inputs:
       # Restore both golden entries, report whether they arrived, empty the
@@ -414,10 +430,13 @@ jobs:
   # only contents:write token in this workflow, and never checks out or
   # executes source-controlled code. It consumes the IPA the build already
   # verified, so a packaging or signing failure upstream cannot reach it.
+  #
+  # Only master releases: dev (and any other branch) stops at the build job's
+  # artifact, which is uploaded on every run.
   # ---------------------------------------------------------------------------
   publish:
     needs: build
-    if: github.event_name != 'schedule'
+    if: github.event_name != 'schedule' && github.ref == 'refs/heads/master'
     runs-on: ubuntu-24.04
     permissions:
       contents: write

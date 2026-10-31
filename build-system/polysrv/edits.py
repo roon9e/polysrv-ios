@@ -28,6 +28,7 @@ SETTINGS_SEARCHABLE_ITEMS_SWIFT = "submodules/SettingsUI/Sources/Search/Settings
 SETTINGS_ACCOUNTS_ITEMS_SWIFT = "submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift"
 SETTINGS_ACCOUNTS_ACTIONS_SWIFT = "submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreenSettingsActions.swift"
 PEERINFO_SCREEN_SWIFT = "submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreen.swift"
+LOG_SWIFT = "submodules/TelegramCore/Sources/Utils/Log.swift"
 TELEGRAM_BUILD = "Telegram/BUILD"
 
 EDITS = [
@@ -1144,6 +1145,42 @@ EDITS = [
             "                        contentHeight += sectionSpacing\n"
             "                    }\n"
             "                }\n"
+        ),
+    },
+    # PolySRV: this build writes no log files. File logging is on by default for
+    # an internal build and for one carrying a sandbox receipt (which a sideloaded
+    # build does), and the "critical log" writer runs whether or not file logging
+    # is enabled, so the container filled with log-*.txt and critlog-*.txt files
+    # nobody asked for.
+    {
+        "file": APP_DELEGATE_SWIFT,
+        "label": "AppDelegate.swift no file logging",
+        "old": (
+            "            Logger.shared.logToFile = loggingSettings.logToFile\n"
+        ),
+        "new": (
+            "            // PolySRV: file logging stays off whatever the stored or default\n"
+            "            // preference says. The Debug screen's toggle still updates that\n"
+            "            // preference; it just no longer writes any file.\n"
+            "            Logger.shared.logToFile = false\n"
+        ),
+    },
+    {
+        "file": LOG_SWIFT,
+        "label": "Log.swift gate the critical log with file logging",
+        "old": (
+            "    public func shortLog(_ tag: String, _ what: @autoclosure () -> String) {\n"
+            "        let string = what()\n"
+        ),
+        "new": (
+            "    public func shortLog(_ tag: String, _ what: @autoclosure () -> String) {\n"
+            "        // PolySRV: the critical log (critlog-*.txt) is written whether or not\n"
+            "        // file logging is on, so it is gated here too. With file logging off\n"
+            "        // this build leaves no log-* and no critlog-* file behind at all.\n"
+            "        if !self.logToFile {\n"
+            "            return\n"
+            "        }\n"
+            "        let string = what()\n"
         ),
     },
 ]
