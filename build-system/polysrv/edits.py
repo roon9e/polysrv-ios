@@ -1154,15 +1154,26 @@ EDITS = [
     # nobody asked for.
     {
         "file": APP_DELEGATE_SWIFT,
-        "label": "AppDelegate.swift no file logging",
+        "label": "AppDelegate.swift file logging off by default",
         "old": (
-            "            Logger.shared.logToFile = loggingSettings.logToFile\n"
+            "        if isDebugConfiguration || buildConfig.isInternalBuild {\n"
+            "            LoggingSettings.defaultSettings = LoggingSettings(logToFile: true, logToConsole: false, redactSensitiveData: true)\n"
+            "        } else {\n"
+            "            LoggingSettings.defaultSettings = LoggingSettings(logToFile: false, logToConsole: false, redactSensitiveData: true)\n"
+            "        }\n"
         ),
         "new": (
-            "            // PolySRV: file logging stays off whatever the stored or default\n"
-            "            // preference says. The Debug screen's toggle still updates that\n"
-            "            // preference; it just no longer writes any file.\n"
-            "            Logger.shared.logToFile = false\n"
+            "        // PolySRV: file logging is off by default in every configuration. A\n"
+            "        // sideloaded build carries a sandbox receipt and an internal build\n"
+            "        // config, either of which turned it on, which left log-*.txt and\n"
+            "        // critlog-*.txt files in the container for nothing. This is only the\n"
+            "        // *default*: the Debug settings screen's toggle still turns file\n"
+            "        // logging back on, and the stored preference is honoured as before.\n"
+            "        if isDebugConfiguration || buildConfig.isInternalBuild {\n"
+            "            LoggingSettings.defaultSettings = LoggingSettings(logToFile: false, logToConsole: false, redactSensitiveData: true)\n"
+            "        } else {\n"
+            "            LoggingSettings.defaultSettings = LoggingSettings(logToFile: false, logToConsole: false, redactSensitiveData: true)\n"
+            "        }\n"
         ),
     },
     {
@@ -1175,8 +1186,9 @@ EDITS = [
         "new": (
             "    public func shortLog(_ tag: String, _ what: @autoclosure () -> String) {\n"
             "        // PolySRV: the critical log (critlog-*.txt) is written whether or not\n"
-            "        // file logging is on, so it is gated here too. With file logging off\n"
-            "        // this build leaves no log-* and no critlog-* file behind at all.\n"
+            "        // file logging is on, so it follows the same flag. With the default\n"
+            "        // (off) this build writes no log-* and no critlog-* file; turning\n"
+            "        // file logging on in the Debug settings turns this back on with it.\n"
             "        if !self.logToFile {\n"
             "            return\n"
             "        }\n"
