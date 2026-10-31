@@ -1,0 +1,19 @@
+{
+    "general": {
+        "app_name": "PolySRV",
+        "bundle_id": "org.polysrv.messenger",
+        "url_scheme": "srv",
+        "url_scheme_short": "srv",
+        "app_specific_url_scheme": "srv",
+        "host": "polysrv.ru"
+    },
+    "appstore": {
+        "is_appstore_build": "false",
+        "enable_siri": false,
+        "enable_icloud": false
+    },
+    "workarounds": {
+        "app_group_fallback": true,
+        "aps_environment_fallback": true
+    }
+}

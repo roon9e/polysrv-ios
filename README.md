@@ -1,116 +1,101 @@
-# Telegram iOS Source Code Compilation Guide
+# PolySRV iOS
 
-We welcome all developers to use our API and source code to create applications on our platform.
-There are several things we require from **all developers** for the moment.
+PolySRV is a [Telegram iOS][telegram_ios] fork that lets you sign in to **more
+than one server** from a single application, alongside the official Telegram
+network.
 
-# Creating your Telegram Application
+It keeps the upstream Telegram iOS feature set, the same
+[MTProto][telegram_proto] transport and the same update model, and adds:
 
-1. [**Obtain your own api_id**](https://core.telegram.org/api/obtaining_api_id) for your application.
-2. Please **do not** use the name Telegram for your app — or make sure your users understand that it is unofficial.
-3. Kindly **do not** use our standard logo (white paper plane in a blue circle) as your app's logo.
-3. Please study our [**security guidelines**](https://core.telegram.org/mtproto/security_guidelines) and take good care of your users' data and privacy.
-4. Please remember to publish **your** code too in order to comply with the licences.
+* **A server picker before sign-in.** Adding an account starts on the server
+  list: choose the official Telegram network, or point the client at a
+  self-hosted MTProto backend. The account is created already bound to the
+  server you chose.
+* **Your own servers, editable in place.** Add, edit and delete self-hosted
+  servers from the picker — name, description, address, port, home data center
+  and public key. The published servers stay read-only.
+* **One client, many servers.** Well past the official cloud's three accounts:
+  the client holds `min(premium accounts + 20, 50)`, the same policy as PolySRV
+  Desktop. Every account keeps its own server binding, so switching servers
+  resets the keys, addresses and tokens the previous server's session had made
+  instead of presenting them to the new one.
+* **One published server list.** The servers offered beyond the built-in
+  Telegram one live on the `gh-pages` branch and are fetched at runtime, so
+  adding or withdrawing a server needs no new build. A server an account is
+  signed in to survives being withdrawn; once nothing is bound to it, it is
+  gone.
 
-# Quick Compilation Guide
+The multi-server design is inspired by the
+[owpengram](https://github.com/owpengram/owpengram-desktop-client) desktop
+client, with a number of its rough edges fixed, and it is deliberately the same
+feature set as [PolySRV Desktop](https://github.com/roon9e/polysrv-desktop).
+PolySRV is not affiliated with Telegram FZ-LLC or with owpengram; Telegram
+itself remains a separate project with its own clients and its own releases.
 
-## Get the Code
+## Building
 
-```
-git clone --recursive -j8 https://github.com/TelegramMessenger/Telegram-iOS.git
-```
+The upstream set-up — creating your own application, installing Xcode, the
+configuration files — is the upstream guide in
+[TelegramMessenger/Telegram-iOS][telegram_ios]. This repository's own notes, the
+exact Bazel invocation and the simulator workflow are in [`CLAUDE.md`](CLAUDE.md).
 
-## Setup Xcode
+Two things are applied to a checkout **before** it is built, so upstream sources
+stay pristine and a new upstream release can be merged without conflicts:
 
-Install Xcode (directly from https://developer.apple.com/download/applications or using the App Store).
-
-## Adjust Configuration
-
-1. Generate a random identifier:
-```
-openssl rand -hex 8
-```
-2. Create a new Xcode project. Use `Telegram` as the Product Name. Use `org.{identifier from step 1}` as the Organization Identifier.
-3. Open `Keychain Access` and navigate to `Certificates`. Locate `Apple Development: your@email.address (XXXXXXXXXX)` and double tap the certificate. Under `Details`, locate `Organizational Unit`. This is the Team ID.
-4. Edit `build-system/template_minimal_development_configuration.json`. Use data from the previous steps.
-
-## Generate an Xcode project
-
-```
-python3 build-system/Make/Make.py \
-    --cacheDir="$HOME/telegram-bazel-cache" \
-    generateProject \
-    --configurationPath=build-system/template_minimal_development_configuration.json \
-    --xcodeManagedCodesigning
-```
-
-# Advanced Compilation Guide
-
-## Xcode
-
-1. Copy and edit `build-system/appstore-configuration.json`.
-2. Copy `build-system/fake-codesigning`. Create and download provisioning profiles, using the `profiles` folder as a reference for the entitlements.
-3. Generate an Xcode project:
-```
-python3 build-system/Make/Make.py \
-    --cacheDir="$HOME/telegram-bazel-cache" \
-    generateProject \
-    --configurationPath=configuration_from_step_1.json \
-    --codesigningInformationPath=directory_from_step_2
+```sh
+python3 build-system/apply_branding.py build-system/branding/branding.json
+python3 build-system/polysrv/apply_polysrv.py
 ```
 
-## IPA
+* `build-system/branding/` — the product name, the bundle identifier, the URL
+  scheme and the host. Renaming the build means editing `branding.json` and
+  re-running the script.
+* `build-system/polysrv/` — the whole multi-server feature: the server registry,
+  the picker and the add/edit form, the anchored edits that hook them into the
+  network, the account and MtProtoKit, and the bundled fallback server list.
 
-1. Repeat the steps from the previous section. Use distribution provisioning profiles.
-2. Run:
-```
-python3 build-system/Make/Make.py \
-    --cacheDir="$HOME/telegram-bazel-cache" \
-    build \
-    --configurationPath=...see previous section... \
-    --codesigningInformationPath=...see previous section... \
-    --buildNumber=100001 \
-    --configuration=release_arm64
-```
+The API credentials are **not committed**: CI overwrites `api_id` / `api_hash`
+in `build-system/appstore-configuration.json` from repository secrets while it
+builds, and a local build has to do the same. `.github/workflows/build.yml` is
+the whole build — pushing to the `polysrv` branch builds the IPA and publishes
+it, and a manual run with `seed_cache` rebuilds the shared Bazel cache.
 
-# FAQ
+## Releases
 
-## Xcode is stuck at "build-request.json not updated yet"
-
-Occasionally, you might observe the following message in your build log:
-```
-"/Users/xxx/Library/Developer/Xcode/DerivedData/Telegram-xxx/Build/Intermediates.noindex/XCBuildData/xxx.xcbuilddata/build-request.json" not updated yet, waiting...
-```
-
-Should this occur, simply cancel the ongoing build and initiate a new one.
-
-## Telegram_xcodeproj: no such package 
-
-Following a system restart, the auto-generated Xcode project might encounter a build failure accompanied by this error:
-```
-ERROR: Skipping '@rules_xcodeproj_generated//generator/Telegram/Telegram_xcodeproj:Telegram_xcodeproj': no such package '@rules_xcodeproj_generated//generator/Telegram/Telegram_xcodeproj': BUILD file not found in directory 'generator/Telegram/Telegram_xcodeproj' of external repository @rules_xcodeproj_generated. Add a BUILD file to a directory to mark it as a package.
-```
-
-If you encounter this issue, re-run the project generation steps in the README.
-
-
-# Tips
-
-## Codesigning is not required for simulator-only builds
-
-Add `--disableProvisioningProfiles`:
-```
-python3 build-system/Make/Make.py \
-    --cacheDir="$HOME/telegram-bazel-cache" \
-    generateProject \
-    --configurationPath=path-to-configuration.json \
-    --codesigningInformationPath=path-to-provisioning-data \
-    --disableProvisioningProfiles
-```
-
-## Versions
-
-Each release is built using a specific Xcode version (see `versions.json`). The helper script checks the versions of the installed software and reports an error if they don't match the ones specified in `versions.json`. It is possible to bypass these checks:
+Builds are published as GitHub releases by that workflow — the official Telegram
+version plus this repository's build number, e.g. `PolySRV 13.1.2 (3732)`. The
+server list the picker offers is at
 
 ```
-python3 build-system/Make/Make.py --overrideXcodeVersion build ... # Don't check the version of Xcode
+https://roon9e.github.io/polysrv-ios/servers.json
 ```
+
+on the `gh-pages` branch, maintained by hand (web UI or `gh api`); the same
+branch mirrors PolySRV Desktop's, so one published list serves both.
+
+The IPA is built with placeholder signing, because no Apple developer account is
+involved: re-sign it with your own certificate and provisioning profile, or
+install it with your own sideloading tooling, before it will run on a device.
+
+## Telegram's requirements
+
+Telegram asks every client built on their API to do the following, and this
+project does:
+
+* Use **your own api_id**, obtained from
+  [my.telegram.org](https://core.telegram.org/api/obtaining_api_id).
+* Do not call the app "Telegram", and make sure users understand it is
+  unofficial.
+* Do not use Telegram's logo (the white paper plane in a blue circle).
+* Read the [security guidelines](https://core.telegram.org/mtproto/security_guidelines)
+  and take care of your users' data and privacy.
+* Publish your own source code, to comply with the licences.
+
+## License
+
+The source code is published under the same license as upstream Telegram iOS,
+available [here][license].
+
+[telegram_ios]: https://github.com/TelegramMessenger/Telegram-iOS
+[telegram_proto]: https://core.telegram.org/mtproto
+[license]: https://github.com/TelegramMessenger/Telegram-iOS/blob/master/LICENSE
