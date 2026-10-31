@@ -26,6 +26,7 @@ LOGOUT_OPTIONS_SWIFT = "submodules/SettingsUI/Sources/LogoutOptionsController.sw
 DELETE_ACCOUNT_OPTIONS_SWIFT = "submodules/SettingsUI/Sources/DeleteAccountOptionsController.swift"
 SETTINGS_SEARCHABLE_ITEMS_SWIFT = "submodules/SettingsUI/Sources/Search/SettingsSearchableItems.swift"
 SETTINGS_ACCOUNTS_ITEMS_SWIFT = "submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift"
+SETTINGS_ACCOUNTS_ACTIONS_SWIFT = "submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreenSettingsActions.swift"
 TELEGRAM_BUILD = "Telegram/BUILD"
 
 EDITS = [
@@ -469,6 +470,11 @@ EDITS = [
             "                return\n"
             "            }\n"
             "            let _ = logoutFromAccount(id: accountId, accountManager: strongSelf.sharedContext.accountManager, alreadyLoggedOutRemotely: false).startStandalone()\n"
+            "        }, presentEditor: { [weak self] server, completion in\n"
+            "            guard let strongSelf = self else {\n"
+            "                return\n"
+            "            }\n"
+            "            strongSelf.polySrvPresentEditor(server: server, completion: completion)\n"
             "        })\n"
             "        let picker = PolySrvServerSelectController(servers: servers, account: self.account, theme: self.presentationData.theme, leftButtonTitle: \"Back\", environment: environment, onSelect: { [weak self] server in\n"
             "            guard let strongSelf = self else {\n"
@@ -482,6 +488,17 @@ EDITS = [
             "            strongSelf.polySrvShowSplash()\n"
             "        })\n"
             "        self.presentOverlay(controller: picker, inGlobal: true, blockInteraction: true)\n"
+            "    }\n"
+            "    \n"
+            "    // The add/edit form is a window presentation (the way the app shows its\n"
+            "    // own input screens), so it gets a keyboard; the picker stepped aside and\n"
+            "    // is put back when the form closes.\n"
+            "    private func polySrvPresentEditor(server: PolySrvServer?, completion: @escaping (PolySrvServer?) -> Void) {\n"
+            "        let controller = PolySrvServerEditController(server: server, theme: self.presentationData.theme, completion: { [weak self] saved in\n"
+            "            completion(saved)\n"
+            "            self?.polySrvProceedToLogin()\n"
+            "        })\n"
+            "        self.currentWindow?.present(controller, on: .root, blockInteraction: false, completion: {})\n"
             "    }\n"
             "    \n"
             "    private func polySrvApplyAndContinue(serverId: String) {\n"
@@ -698,6 +715,17 @@ EDITS = [
             "                return\n"
             "            }\n"
             "            let _ = logoutFromAccount(id: accountId, accountManager: self.accountManager, alreadyLoggedOutRemotely: false).startStandalone()\n"
+            "        }, presentEditor: { [weak self] server, completion in\n"
+            "            guard let self = self else {\n"
+            "                return\n"
+            "            }\n"
+            "            // Window presentation, like the app's own input screens, so the\n"
+            "            // form gets a keyboard; the picker stepped aside first.\n"
+            "            let editor = PolySrvServerEditController(server: server, theme: theme, completion: { [weak self] saved in\n"
+            "                completion(saved)\n"
+            "                self?.polySrvPickServerForNewAuth(testingEnvironment: testingEnvironment)\n"
+            "            })\n"
+            "            self.mainWindow?.present(editor, on: .root, blockInteraction: false, completion: {})\n"
             "        })\n"
             "        let picker = PolySrvServerSelectController(servers: PolySrvServers.shared.allServers(), account: nil, theme: theme, environment: environment, onSelect: { [weak self] server in\n"
             "            guard let self = self else {\n"
@@ -901,7 +929,8 @@ EDITS = [
             "            }\n"
         ),
         "new": (
-            "            // PolySRV: one group per server, under the server's name.\n"
+            "            // PolySRV: one section per server, so each server is its own\n"
+            "            // glass block with the server's name as the section header.\n"
             "            var polySrvGroups: [(name: String, isTelegram: Bool, entries: [(AccountContext, EnginePeer, Int32)])] = []\n"
             "            for polySrvEntry in settings.accountsAndPeers {\n"
             "                let polySrvName = PolySrvServers.shared.boundServerName(forAccount: polySrvEntry.0.account.id)\n"
@@ -918,10 +947,8 @@ EDITS = [
             "                }\n"
             "                return lhs.name < rhs.name\n"
             "            }\n"
-            "            var polySrvHeaderId = 900\n"
             "            for polySrvGroup in polySrvGroups {\n"
-            "                items[.accounts]!.append(PeerInfoScreenHeaderItem(id: polySrvHeaderId, text: polySrvGroup.name))\n"
-            "                polySrvHeaderId += 1\n"
+            "                var polySrvItems: [PeerInfoScreenItem] = [PeerInfoScreenHeaderItem(id: 0, text: polySrvGroup.name)]\n"
             "                for (peerAccountContext, peer, badgeCount) in polySrvGroup.entries {\n"
             "                    let mappedContext = ItemListPeerItem.Context.custom(ItemListPeerItem.Context.Custom(\n"
             "                        accountPeerId: peerAccountContext.account.peerId,\n"
@@ -934,7 +961,7 @@ EDITS = [
             "                        }\n"
             "                    ))\n"
             "                    let member: PeerInfoMember = .account(peer: EngineRenderedPeer(peer: peer))\n"
-            "                    items[.accounts]!.append(PeerInfoScreenMemberItem(id: member.id, context: mappedContext, enclosingPeer: nil, member: member, badge: badgeCount > 0 ? \"\\(compactNumericCountString(Int(badgeCount), decimalSeparator: presentationData.dateTimeFormat.decimalSeparator))\" : nil, isAccount: true, action: { action in\n"
+            "                    polySrvItems.append(PeerInfoScreenMemberItem(id: member.id, context: mappedContext, enclosingPeer: nil, member: member, badge: badgeCount > 0 ? \"\\(compactNumericCountString(Int(badgeCount), decimalSeparator: presentationData.dateTimeFormat.decimalSeparator))\" : nil, isAccount: true, action: { action in\n"
             "                        switch action {\n"
             "                        case .open:\n"
             "                            interaction.switchToAccount(peerAccountContext.account.id)\n"
@@ -947,6 +974,7 @@ EDITS = [
             "                        interaction.accountContextMenu(peerAccountContext.account.id, node, gesture)\n"
             "                    }))\n"
             "                }\n"
+            "                polySrvAccountSections.append((AnyHashable(\"polysrv-accounts-\\(polySrvGroup.name)-\\(polySrvGroup.isTelegram)\"), polySrvItems))\n"
             "            }\n"
         ),
     },
@@ -975,6 +1003,97 @@ EDITS = [
             "                navigationController.pushViewController(PolySrvAccountsController(context: context))\n"
             "            }\n"
             "        }))\n"
+        ),
+    },
+    # PolySRV: the accounts groups are collected here and spliced into `result`
+    # as their own sections (one glass block per server).
+    {
+        "file": SETTINGS_ACCOUNTS_ITEMS_SWIFT,
+        "label": "Settings accounts: group list local",
+        "old": (
+            "    var items: [SettingsSection: [PeerInfoScreenItem]] = [:]\n"
+            "    for section in SettingsSection.allCases {\n"
+            "        items[section] = []\n"
+            "    }\n"
+        ),
+        "new": (
+            "    var items: [SettingsSection: [PeerInfoScreenItem]] = [:]\n"
+            "    for section in SettingsSection.allCases {\n"
+            "        items[section] = []\n"
+            "    }\n"
+            "    \n"
+            "    var polySrvAccountSections: [(AnyHashable, [PeerInfoScreenItem])] = []\n"
+        ),
+    },
+    {
+        "file": SETTINGS_ACCOUNTS_ITEMS_SWIFT,
+        "label": "Settings accounts: splice per-server sections",
+        "old": (
+            "    var result: [(AnyHashable, [PeerInfoScreenItem])] = []\n"
+            "    for section in SettingsSection.allCases {\n"
+            "        if let sectionItems = items[section], !sectionItems.isEmpty {\n"
+            "            result.append((section, sectionItems))\n"
+            "        }\n"
+            "    }\n"
+            "    return result\n"
+        ),
+        "new": (
+            "    var result: [(AnyHashable, [PeerInfoScreenItem])] = []\n"
+            "    for section in SettingsSection.allCases {\n"
+            "        if section == .accounts {\n"
+            "            // PolySRV: one section (one glass block) per server.\n"
+            "            for polySrvAccountSection in polySrvAccountSections {\n"
+            "                result.append(polySrvAccountSection)\n"
+            "            }\n"
+            "        }\n"
+            "        if let sectionItems = items[section], !sectionItems.isEmpty {\n"
+            "            result.append((section, sectionItems))\n"
+            "        }\n"
+            "    }\n"
+            "    return result\n"
+        ),
+    },
+    # PolySRV: Settings -> Add Account is the path that still enforced the
+    # official cloud's 3-or-4 limit; it uses the client's own cap too.
+    {
+        "file": SETTINGS_ACCOUNTS_ACTIONS_SWIFT,
+        "label": "PeerInfoScreenSettingsActions.swift PolySRV account cap",
+        "old": (
+            "                var maximumAvailableAccounts: Int = 3\n"
+            "                if accountAndPeer?.1.isPremium == true && !strongSelf.context.account.testingEnvironment {\n"
+            "                    maximumAvailableAccounts = 4\n"
+            "                }\n"
+            "                var count: Int = 1\n"
+            "                for (accountContext, peer, _) in accountsAndPeers {\n"
+            "                    if !accountContext.account.testingEnvironment {\n"
+            "                        if peer.isPremium {\n"
+            "                            maximumAvailableAccounts = 4\n"
+            "                        }\n"
+            "                        count += 1\n"
+            "                    }\n"
+            "                }\n"
+            "                \n"
+            "                if count >= maximumAvailableAccounts {\n"
+        ),
+        "new": (
+            "                // PolySRV: the cap is desktop's and counts every server:\n"
+            "                // min(premium + 20, 50), not the official cloud's 3-or-4.\n"
+            "                var premiumCount: Int = 0\n"
+            "                if accountAndPeer?.1.isPremium == true && !strongSelf.context.account.testingEnvironment {\n"
+            "                    premiumCount += 1\n"
+            "                }\n"
+            "                var count: Int = 1\n"
+            "                for (accountContext, peer, _) in accountsAndPeers {\n"
+            "                    if !accountContext.account.testingEnvironment {\n"
+            "                        if peer.isPremium {\n"
+            "                            premiumCount += 1\n"
+            "                        }\n"
+            "                        count += 1\n"
+            "                    }\n"
+            "                }\n"
+            "                let maximumAvailableAccounts = PolySrvServers.maximumAccountCount(premiumCount: premiumCount)\n"
+            "                \n"
+            "                if count >= maximumAvailableAccounts {\n"
         ),
     },
 ]

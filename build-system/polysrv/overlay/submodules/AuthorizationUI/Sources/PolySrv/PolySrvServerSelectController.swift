@@ -15,10 +15,17 @@ public struct PolySrvServerPickerEnvironment {
     public let confirmDeletion: (String, @escaping () -> Void) -> Void
     /// Log an account out, so its server can be removed.
     public let logOut: (AccountRecordId) -> Void
+    /// Open the add/edit form. The presenter shows it the way the app shows its
+    /// own input screens (presented on the window, not dropped into an overlay),
+    /// which is what gives it a keyboard; `completion` gets the saved server, or
+    /// nil when the form was cancelled. The picker is dismissed before this is
+    /// called and the presenter puts it back when the form closes.
+    public let presentEditor: (PolySrvServer?, @escaping (PolySrvServer?) -> Void) -> Void
 
-    public init(confirmDeletion: @escaping (String, @escaping () -> Void) -> Void, logOut: @escaping (AccountRecordId) -> Void) {
+    public init(confirmDeletion: @escaping (String, @escaping () -> Void) -> Void, logOut: @escaping (AccountRecordId) -> Void, presentEditor: @escaping (PolySrvServer?, @escaping (PolySrvServer?) -> Void) -> Void) {
         self.confirmDeletion = confirmDeletion
         self.logOut = logOut
+        self.presentEditor = presentEditor
     }
 }
 
@@ -41,8 +48,12 @@ private final class PolySrvServerSelectControllerNode: ASDisplayNode {
         self.leftButton = UIButton(type: .system)
         self.addButton = UIButton(type: .system)
         super.init()
-        self.leftButton.setTitle(leftButtonTitle, for: .normal)
-        self.addButton.setTitle("Add", for: .normal)
+        // A back chevron and a plus, like the rest of the app's navigation bars,
+        // instead of the words "Cancel" and "Add".
+        self.leftButton.setImage(UIImage(systemName: "chevron.backward"), for: .normal)
+        self.leftButton.accessibilityLabel = leftButtonTitle
+        self.addButton.setImage(UIImage(systemName: "plus"), for: .normal)
+        self.addButton.accessibilityLabel = "Add"
     }
 
     override func didLoad() {
@@ -60,8 +71,8 @@ private final class PolySrvServerSelectControllerNode: ASDisplayNode {
         self.diagnosticLabel.textAlignment = .center
         self.diagnosticLabel.numberOfLines = 2
 
-        self.leftButton.titleLabel?.font = UIFont.systemFont(ofSize: 17.0)
-        self.addButton.titleLabel?.font = UIFont.systemFont(ofSize: 17.0)
+        self.leftButton.tintColor = self.theme.list.itemAccentColor
+        self.addButton.tintColor = self.theme.list.itemAccentColor
 
         self.header.addSubview(self.titleLabel)
         self.header.addSubview(self.leftButton)
@@ -77,37 +88,27 @@ private final class PolySrvServerSelectControllerNode: ASDisplayNode {
         self.diagnosticLabel.text = text
     }
 
-    func updateLayout(size: CGSize, safeInsets: UIEdgeInsets) {
+    func updateLayout(size: CGSize, topInset: CGFloat) {
         let barHeight: CGFloat = 44.0
         let diagnosticHeight: CGFloat = self.diagnosticLabel.text?.isEmpty == false ? 28.0 : 0.0
-        let headerHeight = safeInsets.top + barHeight + diagnosticHeight
+        let headerTop = topInset + 8.0
+        let headerHeight = headerTop + barHeight + diagnosticHeight
         self.header.frame = CGRect(x: 0.0, y: 0.0, width: size.width, height: headerHeight)
+
+        let buttonSize: CGFloat = 44.0
 
         self.titleLabel.sizeToFit()
         self.titleLabel.frame = CGRect(
             x: floor((size.width - self.titleLabel.bounds.width) / 2.0),
-            y: safeInsets.top + floor((barHeight - self.titleLabel.bounds.height) / 2.0),
+            y: headerTop + floor((barHeight - self.titleLabel.bounds.height) / 2.0),
             width: self.titleLabel.bounds.width,
             height: self.titleLabel.bounds.height
         )
 
-        self.leftButton.sizeToFit()
-        self.leftButton.frame = CGRect(
-            x: 16.0,
-            y: safeInsets.top + floor((barHeight - self.leftButton.bounds.height) / 2.0),
-            width: self.leftButton.bounds.width,
-            height: self.leftButton.bounds.height
-        )
+        self.leftButton.frame = CGRect(x: 8.0, y: headerTop, width: buttonSize, height: barHeight)
+        self.addButton.frame = CGRect(x: size.width - buttonSize - 8.0, y: headerTop, width: buttonSize, height: barHeight)
 
-        self.addButton.sizeToFit()
-        self.addButton.frame = CGRect(
-            x: size.width - self.addButton.bounds.width - 16.0,
-            y: safeInsets.top + floor((barHeight - self.addButton.bounds.height) / 2.0),
-            width: self.addButton.bounds.width,
-            height: self.addButton.bounds.height
-        )
-
-        self.diagnosticLabel.frame = CGRect(x: 12.0, y: safeInsets.top + barHeight, width: size.width - 24.0, height: diagnosticHeight)
+        self.diagnosticLabel.frame = CGRect(x: 12.0, y: headerTop + barHeight, width: size.width - 24.0, height: diagnosticHeight)
 
         self.tableView.frame = CGRect(x: 0.0, y: headerHeight, width: size.width, height: max(0.0, size.height - headerHeight))
     }
@@ -139,7 +140,10 @@ public final class PolySrvServerSelectController: ViewController, UITableViewDat
     private let leftButtonTitle: String
 
     private var visibleSections: [Section] = [.telegram, .custom]
-    private var statusByServerId: [String: String] = [:]
+    /// Whether each server was reachable on the last probe. A green or red dot,
+    /// not a millisecond count: the TCP connect is answered by a local VPN/proxy
+    /// when one is in use, so the number measured the tunnel, not the server.
+    private var reachabilityByServerId: [String: Bool] = [:]
     private var diagnosticText: String = ""
     private var validLayout: ContainerViewLayout?
     private let statusDisposable = MetaDisposable()
@@ -180,7 +184,7 @@ public final class PolySrvServerSelectController: ViewController, UITableViewDat
     public override func containerLayoutUpdated(_ layout: ContainerViewLayout, transition: ContainedViewLayoutTransition) {
         super.containerLayoutUpdated(layout, transition: transition)
         self.validLayout = layout
-        self.controllerNode.updateLayout(size: layout.size, safeInsets: layout.safeInsets)
+        self.controllerNode.updateLayout(size: layout.size, topInset: max(layout.safeInsets.top, layout.statusBarHeight ?? 24.0))
     }
 
     public override func viewDidAppear(_ animated: Bool) {
@@ -280,7 +284,7 @@ public final class PolySrvServerSelectController: ViewController, UITableViewDat
         self.diagnosticText = parts.joined(separator: "\n")
         self.controllerNode.setDiagnostic(self.diagnosticText)
         if let layout = self.validLayout {
-            self.controllerNode.updateLayout(size: layout.size, safeInsets: layout.safeInsets)
+            self.controllerNode.updateLayout(size: layout.size, topInset: max(layout.safeInsets.top, layout.statusBarHeight ?? 24.0))
         }
     }
 
@@ -301,18 +305,25 @@ public final class PolySrvServerSelectController: ViewController, UITableViewDat
     }
 
     private func presentEdit(server: PolySrvServer?) {
-        let controller = PolySrvServerEditController(server: server, theme: self.theme, completion: { [weak self] _ in
+        // Open the form through the presenter, on the window (the way the app's
+        // own input screens are shown). The picker steps out of the way first;
+        // the presenter restores it when the form closes.
+        let completion: (PolySrvServer?) -> Void = { [weak self] _ in
             guard let self = self else {
                 return
             }
             self.reloadServers()
             self.pingAll()
-        })
-        // Present in the window's global overlay. The picker itself is shown
-        // with presentOverlay(inGlobal: true), and Display renders a local
-        // overlay (what .window(.root) becomes) BELOW the global overlay
-        // containers, so the form would open hidden behind the picker.
-        self.presentInGlobalOverlay(controller)
+        }
+        if let environment = self.environment {
+            self.dismiss()
+            environment.presentEditor(server, completion)
+        } else {
+            let controller = PolySrvServerEditController(server: server, theme: self.theme, completion: { saved in
+                completion(saved)
+            })
+            self.presentInGlobalOverlay(controller)
+        }
     }
 
     private func delete(_ server: PolySrvServer) {
@@ -407,11 +418,14 @@ public final class PolySrvServerSelectController: ViewController, UITableViewDat
         if !server.isTelegram && !PolySrvServers.shared.isCustomServer(server.id) && !PolySrvServers.shared.isPublished(server.id) {
             detail += " · no longer published"
         }
-        if let status = self.statusByServerId[server.id] {
-            detail += "  ·  " + status
-        }
         cell.detailTextLabel?.text = detail
-        cell.accessoryType = .disclosureIndicator
+        // The reachability dot replaces the disclosure arrow (setting accessoryType
+        // after accessoryView would drop the custom view).
+        cell.accessoryType = .none
+        cell.accessoryView = PolySrvServerSelectController.reachabilityDot(
+            reachable: self.reachabilityByServerId[server.id],
+            theme: self.theme
+        )
         return cell
     }
 
@@ -488,6 +502,18 @@ public final class PolySrvServerSelectController: ViewController, UITableViewDat
         }
     }
 
+    /// A small reachability dot: green when the last probe connected, red when it
+    /// did not, grey before the first probe.
+    private static func reachabilityDot(reachable: Bool?, theme: PresentationTheme) -> UIView {
+        let size: CGFloat = 10.0
+        let container = UIView(frame: CGRect(x: 0.0, y: 0.0, width: size + 16.0, height: size))
+        let dot = UIView(frame: CGRect(x: 0.0, y: 0.0, width: size, height: size))
+        dot.layer.cornerRadius = size / 2.0
+        dot.backgroundColor = reachable == nil ? theme.list.itemSecondaryTextColor : (reachable == true ? UIColor(red: 0.20, green: 0.78, blue: 0.35, alpha: 1.0) : UIColor(red: 1.0, green: 0.23, blue: 0.19, alpha: 1.0))
+        container.addSubview(dot)
+        return container
+    }
+
     // MARK: - Ping
 
     private func ping(_ server: PolySrvServer) {
@@ -503,7 +529,6 @@ public final class PolySrvServerSelectController: ViewController, UITableViewDat
             host = server.host
             port = server.port
         }
-        let start = Date()
         guard let nwPort = NWEndpoint.Port(rawValue: UInt16(clamping: port)) else {
             return
         }
@@ -516,12 +541,11 @@ public final class PolySrvServerSelectController: ViewController, UITableViewDat
             }
             finished = true
             connection.cancel()
-            let elapsed = Int(Date().timeIntervalSince(start) * 1000.0)
             DispatchQueue.main.async {
                 guard let self = self else {
                     return
                 }
-                self.statusByServerId[server.id] = ok ? "\(elapsed) ms" : "unreachable"
+                self.reachabilityByServerId[server.id] = ok
                 for (section, kind) in self.visibleSections.enumerated() {
                     let row: Int?
                     switch kind {

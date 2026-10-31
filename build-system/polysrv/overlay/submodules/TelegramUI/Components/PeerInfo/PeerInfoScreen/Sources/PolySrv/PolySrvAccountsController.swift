@@ -193,6 +193,14 @@ public final class PolySrvAccountsController: ViewController, UITableViewDataSou
         tableView.deselectRow(at: indexPath, animated: true)
 
         if indexPath.section == self.groups.count {
+            // The same cap as everywhere else: min(premium + 20, 50), not the
+            // official cloud's 3-or-4.
+            let accounts = self.groups.flatMap { $0.accounts }
+            let premiumCount = accounts.filter { $0.peer.isPremium }.count
+            let totalCount = accounts.count + (self.primaryId != nil ? 1 : 0)
+            guard totalCount < PolySrvServers.maximumAccountCount(premiumCount: premiumCount) else {
+                return
+            }
             self.context.sharedContext.beginNewAuth(testingEnvironment: self.context.account.testingEnvironment)
             self.dismiss()
             return

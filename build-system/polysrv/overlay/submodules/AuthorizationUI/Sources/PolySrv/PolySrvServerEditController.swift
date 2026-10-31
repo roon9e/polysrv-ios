@@ -124,9 +124,17 @@ private final class PolySrvServerEditControllerNode: ASDisplayNode {
     override func didLoad() {
         super.didLoad()
 
-        self.view.backgroundColor = self.theme.list.plainBackgroundColor
-        self.header.backgroundColor = self.theme.list.plainBackgroundColor
-        self.contentView.backgroundColor = self.theme.list.plainBackgroundColor
+        self.view.backgroundColor = self.theme.list.modalPlainBackgroundColor
+        self.header.backgroundColor = self.theme.list.modalPlainBackgroundColor
+        self.contentView.backgroundColor = .clear
+        self.scrollView.backgroundColor = .clear
+
+        // Rows sit as cards on the grouped background, matching the app's blocks.
+        for row in self.rows {
+            row.backgroundColor = self.theme.list.itemBlocksBackgroundColor
+            row.layer.cornerRadius = 12.0
+            row.clipsToBounds = true
+        }
 
         self.titleLabel.font = UIFont.systemFont(ofSize: 17.0, weight: .semibold)
         self.titleLabel.textColor = self.theme.list.itemPrimaryTextColor
@@ -228,13 +236,14 @@ private final class PolySrvServerEditControllerNode: ASDisplayNode {
 
         self.scrollView.frame = CGRect(x: 0.0, y: headerHeight, width: size.width, height: max(0.0, size.height - headerHeight))
 
-        var y: CGFloat = 8.0
+        let rowInset: CGFloat = 16.0
+        var y: CGFloat = 12.0
         for row in self.rows {
             let height: CGFloat = row === self.keyRow ? 150.0 : 44.0
-            row.frame = CGRect(x: 0.0, y: y, width: size.width, height: height)
-            y += height
+            row.frame = CGRect(x: rowInset, y: y, width: max(0.0, size.width - rowInset * 2.0), height: height)
+            y += height + 8.0
         }
-        y += 8.0
+        y += 4.0
         self.contentView.frame = CGRect(x: 0.0, y: 0.0, width: size.width, height: y)
         self.scrollView.contentSize = CGSize(width: size.width, height: y)
     }
@@ -246,13 +255,14 @@ private final class PolySrvServerEditControllerNode: ASDisplayNode {
 public final class PolySrvServerEditController: ViewController {
     private let server: PolySrvServer?
     private let theme: PresentationTheme
-    private let completion: (PolySrvServer) -> Void
+    /// The saved server, or nil when the form was cancelled.
+    private let completion: (PolySrvServer?) -> Void
 
     private var controllerNode: PolySrvServerEditControllerNode {
         return self.displayNode as! PolySrvServerEditControllerNode
     }
 
-    public init(server: PolySrvServer?, theme: PresentationTheme, completion: @escaping (PolySrvServer) -> Void) {
+    public init(server: PolySrvServer?, theme: PresentationTheme, completion: @escaping (PolySrvServer?) -> Void) {
         self.server = server
         self.theme = theme
         self.completion = completion
@@ -268,6 +278,7 @@ public final class PolySrvServerEditController: ViewController {
         let node = PolySrvServerEditControllerNode(theme: self.theme, editing: self.server != nil, identityLocked: identityLocked, onSave: { [weak self] in
             self?.savePressed()
         }, onCancel: { [weak self] in
+            self?.completion(nil)
             self?.dismiss()
         })
         self.displayNode = node
