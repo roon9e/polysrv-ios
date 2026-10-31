@@ -21,7 +21,9 @@ name: iOS build
 #           build that follows is the fast one and the green check that publishes
 #           the release belongs to the pushed commit itself.
 #   dev     the working branch. It builds on push, uploads the IPA as a workflow
-#           artifact, and never publishes a release.
+#           artifact, and never publishes a release. It restores master's golden
+#           rather than seeding one of its own: the key is the same either way, so
+#           the two branches share a single entry and nothing separate could exist.
 #
 # A toolchain or tree bump changes every action key, so an older generation cannot
 # serve a single action of it. The ios-polysrv- key prefix keeps generations
@@ -708,11 +710,19 @@ jobs:
       # leave the repository with no cache at all (which is what happened on
       # 2026-10-30). Gate on the same condition as the save, and delete nothing
       # unless the current keys are actually present.
+      #
+      # A seed only ever retires its OWN ref's entries. Cache keys are repo-wide
+      # and derived from versions.json + .bazelrc, so two branches at the same pair
+      # share one entry (and a second save of that key is a no-op), while a branch
+      # at a different pair - master lagging dev across a version bump, say - keeps
+      # the generation it still builds from until it seeds again. Deleting across
+      # refs would leave that branch compiling cold with nothing to explain it.
       - name: Retire superseded golden entries
         if: always() && steps.compile.outcome == 'success'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
+          CURRENT_REF: ${{ github.ref }}
           CURRENT_CAS: ios-polysrv-golden-cas-${{ runner.os }}-${{ hashFiles('versions.json', '.bazelrc') }}
           CURRENT_REPOS: ios-polysrv-golden-repos-${{ runner.os }}-${{ hashFiles('versions.json', '.bazelrc') }}
         run: |
@@ -721,12 +731,13 @@ jobs:
           python3 -c '
           import json, os, sys
           keep = {os.environ["CURRENT_CAS"], os.environ["CURRENT_REPOS"]}
+          ref = os.environ["CURRENT_REF"]
           caches = json.load(open("/tmp/caches.json")).get("actions_caches", [])
-          keys = {c["key"] for c in caches}
-          if not keep <= keys:
-              print("current generation is not saved; leaving every entry alone", file=sys.stderr)
+          mine = [c for c in caches if c.get("ref") == ref]
+          if not keep <= {c["key"] for c in mine}:
+              print("this ref has no generation of its own saved; leaving every entry alone", file=sys.stderr)
               raise SystemExit(0)
-          for c in caches:
+          for c in mine:
               if c["key"].startswith("ios-polysrv-golden-") and c["key"] not in keep:
                   print(c["id"])
           ' > /tmp/stale_ids
