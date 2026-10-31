@@ -16,9 +16,10 @@ name: iOS build
 #           is readable by the branch that wrote it and by every branch when it
 #           belongs to the default branch - so the seed belongs here and a
 #           re-seed after a toolchain or tree bump serves every other branch.
-#           It publishes a release, and builds only on demand: a branch with no
-#           cache of its own compiles cold, so the seed goes first and the build
-#           that follows it is the fast one.
+#           It publishes a release. Its golden is seeded before it is pushed (a
+#           branch with no cache of its own compiles cold), so the push-triggered
+#           build that follows is the fast one and the green check that publishes
+#           the release belongs to the pushed commit itself.
 #   dev     the working branch. It builds on push, uploads the IPA as a workflow
 #           artifact, and never publishes a release.
 #
@@ -30,10 +31,12 @@ name: iOS build
 # pins Xcode 27.1, which macos-latest (macOS 26, Xcode <=26.6) does not carry.
 on:
   push:
-    # Only the working branch builds on push. master is built on demand, and only
-    # once its golden cache exists (see the branch note above), so a push there
-    # never spends an hour on a cold compile.
+    # master and the working branch both build on push, so a master commit's own
+    # run is the one that goes green and publishes its release. master's golden is
+    # seeded before its first push (see the branch note above), so that build is
+    # the fast one rather than a cold compile.
     branches:
+      - master
       - dev
   workflow_dispatch:
     inputs:
