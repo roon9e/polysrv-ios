@@ -101,7 +101,7 @@ private final class PolySrvServerSelectControllerNode: ASDisplayNode {
 
         // A glass bar behind the navigation row.
         self.barGlass.frame = CGRect(x: 0.0, y: headerTop, width: size.width, height: barHeight)
-        self.barGlass.update(size: CGSize(width: size.width, height: barHeight), cornerRadius: 0.0, isDark: self.traitCollection.userInterfaceStyle == .dark, tintColor: GlassBackgroundView.TintColor(kind: .panel), isInteractive: false, isVisible: true, transition: .immediate)
+        self.barGlass.update(size: CGSize(width: size.width, height: barHeight), cornerRadius: 0.0, isDark: self.view.traitCollection.userInterfaceStyle == .dark, tintColor: GlassBackgroundView.TintColor(kind: .panel), isInteractive: false, isVisible: true, transition: .immediate)
 
         let buttonSize: CGFloat = 44.0
 
