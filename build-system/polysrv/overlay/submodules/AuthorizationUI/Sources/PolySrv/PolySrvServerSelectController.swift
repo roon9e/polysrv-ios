@@ -6,6 +6,7 @@ import Network
 import SwiftSignalKit
 import TelegramCore
 import TelegramPresentationData
+import GlassBackgroundComponent
 
 /// What the picker needs from whoever presents it, because a deletion has to log
 /// out the accounts that are bound to the server being deleted and that is a
@@ -39,6 +40,7 @@ private final class PolySrvServerSelectControllerNode: ASDisplayNode {
     let leftButton: UIButton
     let addButton: UIButton
     private let header = UIView()
+    private let barGlass = GlassBackgroundView()
     private let titleLabel = UILabel()
     private let diagnosticLabel = UILabel()
 
@@ -60,7 +62,10 @@ private final class PolySrvServerSelectControllerNode: ASDisplayNode {
         super.didLoad()
 
         self.view.backgroundColor = self.theme.list.plainBackgroundColor
-        self.header.backgroundColor = self.theme.list.plainBackgroundColor
+        self.header.backgroundColor = .clear
+
+        self.view.addSubview(self.barGlass)
+        self.view.addSubview(self.header)
 
         self.titleLabel.text = "Servers"
         self.titleLabel.font = UIFont.systemFont(ofSize: 17.0, weight: .semibold)
@@ -78,7 +83,6 @@ private final class PolySrvServerSelectControllerNode: ASDisplayNode {
         self.header.addSubview(self.leftButton)
         self.header.addSubview(self.addButton)
         self.header.addSubview(self.diagnosticLabel)
-        self.view.addSubview(self.header)
 
         self.tableView.backgroundColor = self.theme.list.plainBackgroundColor
         self.view.addSubview(self.tableView)
@@ -94,6 +98,10 @@ private final class PolySrvServerSelectControllerNode: ASDisplayNode {
         let headerTop = topInset + 8.0
         let headerHeight = headerTop + barHeight + diagnosticHeight
         self.header.frame = CGRect(x: 0.0, y: 0.0, width: size.width, height: headerHeight)
+
+        // A glass bar behind the navigation row.
+        self.barGlass.frame = CGRect(x: 0.0, y: headerTop, width: size.width, height: barHeight)
+        self.barGlass.update(size: CGSize(width: size.width, height: barHeight), cornerRadius: 0.0, isDark: self.traitCollection.userInterfaceStyle == .dark, tintColor: GlassBackgroundView.TintColor(kind: .panel), isInteractive: false, isVisible: true, transition: .immediate)
 
         let buttonSize: CGFloat = 44.0
 
@@ -458,6 +466,11 @@ public final class PolySrvServerSelectController: ViewController, UITableViewDat
 
     private func logo(for server: PolySrvServer) -> UIImage? {
         if server.isTelegram {
+            // The app's own Telegram mark, not an SF Symbol. (Falls back to the
+            // symbol if the asset is ever unavailable.)
+            if let logo = UIImage(bundleImageName: "Chat/Context Menu/Telegram") {
+                return logo
+            }
             let plane = UIImage(systemName: "paperplane.fill")
             return plane?.withTintColor(self.theme.list.itemAccentColor, renderingMode: .alwaysOriginal)
         }

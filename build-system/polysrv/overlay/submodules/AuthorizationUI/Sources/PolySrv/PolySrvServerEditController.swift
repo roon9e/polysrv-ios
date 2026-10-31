@@ -4,6 +4,7 @@ import AsyncDisplayKit
 import Display
 import TelegramCore
 import TelegramPresentationData
+import GlassBackgroundComponent
 
 /// One labelled text field. The rows are plain views laid out by hand rather
 /// than cells: the form is a fixed list, so there is nothing for a table's reuse
@@ -11,6 +12,7 @@ import TelegramPresentationData
 private final class PolySrvServerEditFieldRow: UIView {
     let label = UILabel()
     let field = UITextField()
+    private let glass = GlassBackgroundView()
 
     init(title: String, keyboard: UIKeyboardType) {
         super.init(frame: .zero)
@@ -20,6 +22,7 @@ private final class PolySrvServerEditFieldRow: UIView {
         self.field.autocorrectionType = .no
         self.field.autocapitalizationType = .none
         self.field.keyboardType = keyboard
+        self.addSubview(self.glass)
         self.addSubview(self.label)
         self.addSubview(self.field)
     }
@@ -30,6 +33,8 @@ private final class PolySrvServerEditFieldRow: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        self.glass.frame = self.bounds
+        self.glass.update(size: self.bounds.size, cornerRadius: 12.0, isDark: self.traitCollection.userInterfaceStyle == .dark, tintColor: GlassBackgroundView.TintColor(kind: .panel), isInteractive: false, isVisible: true, transition: .immediate)
         let labelWidth: CGFloat = 118.0
         self.label.frame = CGRect(x: 16.0, y: 0.0, width: labelWidth, height: self.bounds.height)
         self.field.frame = CGRect(x: 16.0 + labelWidth, y: 0.0, width: max(0.0, self.bounds.width - labelWidth - 32.0), height: self.bounds.height)
@@ -40,6 +45,7 @@ private final class PolySrvServerEditFieldRow: UIView {
 private final class PolySrvServerEditKeyRow: UIView {
     let label = UILabel()
     let textView = UITextView()
+    private let glass = GlassBackgroundView()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -49,6 +55,7 @@ private final class PolySrvServerEditKeyRow: UIView {
         self.textView.autocorrectionType = .no
         self.textView.autocapitalizationType = .none
         self.textView.backgroundColor = .clear
+        self.addSubview(self.glass)
         self.addSubview(self.label)
         self.addSubview(self.textView)
     }
@@ -59,6 +66,8 @@ private final class PolySrvServerEditKeyRow: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        self.glass.frame = self.bounds
+        self.glass.update(size: self.bounds.size, cornerRadius: 12.0, isDark: self.traitCollection.userInterfaceStyle == .dark, tintColor: GlassBackgroundView.TintColor(kind: .panel), isInteractive: false, isVisible: true, transition: .immediate)
         self.label.frame = CGRect(x: 16.0, y: 0.0, width: self.bounds.width - 32.0, height: 34.0)
         self.textView.frame = CGRect(x: 13.0, y: 34.0, width: max(0.0, self.bounds.width - 26.0), height: max(0.0, self.bounds.height - 40.0))
     }
@@ -67,11 +76,13 @@ private final class PolySrvServerEditKeyRow: UIView {
 private final class PolySrvServerEditSwitchRow: UIView {
     let label = UILabel()
     let toggle = UISwitch()
+    private let glass = GlassBackgroundView()
 
     init(title: String) {
         super.init(frame: .zero)
         self.label.text = title
         self.label.font = UIFont.systemFont(ofSize: 17.0)
+        self.addSubview(self.glass)
         self.addSubview(self.label)
         self.addSubview(self.toggle)
     }
@@ -82,6 +93,8 @@ private final class PolySrvServerEditSwitchRow: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        self.glass.frame = self.bounds
+        self.glass.update(size: self.bounds.size, cornerRadius: 12.0, isDark: self.traitCollection.userInterfaceStyle == .dark, tintColor: GlassBackgroundView.TintColor(kind: .panel), isInteractive: false, isVisible: true, transition: .immediate)
         self.label.frame = CGRect(x: 16.0, y: 0.0, width: max(0.0, self.bounds.width - 90.0), height: self.bounds.height)
         self.toggle.frame = CGRect(x: self.bounds.width - self.toggle.bounds.width - 16.0, y: floor((self.bounds.height - self.toggle.bounds.height) / 2.0), width: self.toggle.bounds.width, height: self.toggle.bounds.height)
     }
@@ -129,11 +142,9 @@ private final class PolySrvServerEditControllerNode: ASDisplayNode {
         self.contentView.backgroundColor = .clear
         self.scrollView.backgroundColor = .clear
 
-        // Rows sit as cards on the grouped background, matching the app's blocks.
+        // Rows are glass cards (each row draws its own GlassBackgroundView).
         for row in self.rows {
-            row.backgroundColor = self.theme.list.itemBlocksBackgroundColor
-            row.layer.cornerRadius = 12.0
-            row.clipsToBounds = true
+            row.backgroundColor = .clear
         }
 
         self.titleLabel.font = UIFont.systemFont(ofSize: 17.0, weight: .semibold)

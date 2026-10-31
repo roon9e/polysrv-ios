@@ -27,6 +27,7 @@ DELETE_ACCOUNT_OPTIONS_SWIFT = "submodules/SettingsUI/Sources/DeleteAccountOptio
 SETTINGS_SEARCHABLE_ITEMS_SWIFT = "submodules/SettingsUI/Sources/Search/SettingsSearchableItems.swift"
 SETTINGS_ACCOUNTS_ITEMS_SWIFT = "submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoSettingsItems.swift"
 SETTINGS_ACCOUNTS_ACTIONS_SWIFT = "submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreenSettingsActions.swift"
+PEERINFO_SCREEN_SWIFT = "submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoScreen.swift"
 TELEGRAM_BUILD = "Telegram/BUILD"
 
 EDITS = [
@@ -998,7 +999,7 @@ EDITS = [
             "        \n"
             "        // PolySRV: always reachable, even with a single account, so every\n"
             "        // account from every server can be seen and switched between.\n"
-            "        items[.accounts]!.append(PeerInfoScreenActionItem(id: 101, text: \"All Accounts\", action: {\n"
+            "        items[.accounts]!.append(PeerInfoScreenActionItem(id: 101, text: \"All Accounts\", icon: UIImage(bundleImageName: \"Call/Accounts\"), action: {\n"
             "            if let navigationController = context.sharedContext.mainWindow?.viewController as? NavigationController {\n"
             "                navigationController.pushViewController(PolySrvAccountsController(context: context))\n"
             "            }\n"
@@ -1094,6 +1095,45 @@ EDITS = [
             "                let maximumAvailableAccounts = PolySrvServers.maximumAccountCount(premiumCount: premiumCount)\n"
             "                \n"
             "                if count >= maximumAvailableAccounts {\n"
+        ),
+    },
+    # PolySRV: the picker and the add/edit form draw their cards and bar with the
+    # app's glass primitive, so AuthorizationUI needs the module.
+    {
+        "file": "submodules/AuthorizationUI/BUILD",
+        "label": "AuthorizationUI BUILD: glass background dependency",
+        "old": (
+            "        \"//submodules/TelegramUI/Components/GlassBarButtonComponent\",\n"
+        ),
+        "new": (
+            "        \"//submodules/TelegramUI/Components/GlassBarButtonComponent\",\n"
+            "        \"//submodules/TelegramUI/Components/GlassBackgroundComponent\",\n"
+        ),
+    },
+    # PolySRV: the per-server account blocks are their own sections, so the
+    # renderer's section spacing would leave a full gap between every one of
+    # them. Give only those sections a smaller gap; every other Settings section
+    # keeps the app's spacing.
+    {
+        "file": PEERINFO_SCREEN_SWIFT,
+        "label": "PeerInfoScreen.swift tighter spacing for account blocks",
+        "old": (
+            "                if !sectionHeight.isZero && !self.state.isEditing {\n"
+            "                    contentHeight += sectionHeight\n"
+            "                    contentHeight += sectionSpacing\n"
+            "                }\n"
+        ),
+        "new": (
+            "                if !sectionHeight.isZero && !self.state.isEditing {\n"
+            "                    contentHeight += sectionHeight\n"
+            "                    // PolySRV: the per-server account blocks sit a little\n"
+            "                    // closer together than the app's own sections.\n"
+            "                    if let polySrvSectionId = sectionId as? String, polySrvSectionId.hasPrefix(\"polysrv-accounts-\") {\n"
+            "                        contentHeight += 10.0\n"
+            "                    } else {\n"
+            "                        contentHeight += sectionSpacing\n"
+            "                    }\n"
+            "                }\n"
         ),
     },
 ]
