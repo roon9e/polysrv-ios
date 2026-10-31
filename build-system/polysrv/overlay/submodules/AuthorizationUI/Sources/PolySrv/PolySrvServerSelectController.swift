@@ -3,10 +3,8 @@ import UIKit
 import AsyncDisplayKit
 import Display
 import Network
-import SwiftSignalKit
 import TelegramCore
 import TelegramPresentationData
-import GlassBackgroundComponent
 import AppBundle
 
 /// What the picker needs from whoever presents it, because a deletion has to log
@@ -17,11 +15,9 @@ public struct PolySrvServerPickerEnvironment {
     public let confirmDeletion: (String, @escaping () -> Void) -> Void
     /// Log an account out, so its server can be removed.
     public let logOut: (AccountRecordId) -> Void
-    /// Open the add/edit form. The presenter shows it the way the app shows its
-    /// own input screens (presented on the window, not dropped into an overlay),
-    /// which is what gives it a keyboard; `completion` gets the saved server, or
-    /// nil when the form was cancelled. The picker is dismissed before this is
-    /// called and the presenter puts it back when the form closes.
+    /// Open the add/edit form. The presenter pushes it on top of the picker, so
+    /// the form's back swipe returns here; `completion` gets the saved server, or
+    /// nil when the form was cancelled.
     public let presentEditor: (PolySrvServer?, @escaping (PolySrvServer?) -> Void) -> Void
 
     public init(confirmDeletion: @escaping (String, @escaping () -> Void) -> Void, logOut: @escaping (AccountRecordId) -> Void, presentEditor: @escaping (PolySrvServer?, @escaping (PolySrvServer?) -> Void) -> Void) {
@@ -38,96 +34,28 @@ private final class PolySrvServerSelectControllerNode: ASDisplayNode {
     private let theme: PresentationTheme
 
     let tableView: UITableView
-    let leftButton: UIButton
-    let addButton: UIButton
-    private let header = UIView()
-    private let leftBubble = GlassBackgroundView()
-    private let addBubble = GlassBackgroundView()
-    private let titleLabel = UILabel()
-    private let diagnosticLabel = UILabel()
 
-    init(theme: PresentationTheme, leftButtonTitle: String) {
+    init(theme: PresentationTheme) {
         self.theme = theme
         self.tableView = UITableView(frame: .zero, style: .insetGrouped)
-        self.leftButton = UIButton(type: .system)
-        self.addButton = UIButton(type: .system)
         super.init()
-        // A back chevron and a plus, like the rest of the app's navigation bars,
-        // instead of the words "Cancel" and "Add".
-        self.leftButton.setImage(UIImage(systemName: "chevron.backward"), for: .normal)
-        self.leftButton.accessibilityLabel = leftButtonTitle
-        self.addButton.setImage(UIImage(systemName: "plus"), for: .normal)
-        self.addButton.accessibilityLabel = "Add"
+        self.tableView.contentInsetAdjustmentBehavior = .never
     }
 
     override func didLoad() {
         super.didLoad()
 
-        self.view.backgroundColor = self.theme.list.plainBackgroundColor
-        self.header.backgroundColor = .clear
-
-        self.titleLabel.text = "Servers"
-        self.titleLabel.font = UIFont.systemFont(ofSize: 17.0, weight: .semibold)
-        self.titleLabel.textColor = self.theme.list.itemPrimaryTextColor
-
-        self.diagnosticLabel.font = UIFont.monospacedSystemFont(ofSize: 11.0, weight: .regular)
-        self.diagnosticLabel.textColor = self.theme.list.itemSecondaryTextColor
-        self.diagnosticLabel.textAlignment = .center
-        self.diagnosticLabel.numberOfLines = 2
-
-        self.leftButton.tintColor = self.theme.list.itemPrimaryTextColor
-        self.addButton.tintColor = self.theme.list.itemPrimaryTextColor
-
-        self.header.addSubview(self.leftBubble)
-        self.header.addSubview(self.addBubble)
-        self.header.addSubview(self.titleLabel)
-        self.header.addSubview(self.leftButton)
-        self.header.addSubview(self.addButton)
-        self.header.addSubview(self.diagnosticLabel)
-
-        self.tableView.backgroundColor = self.theme.list.plainBackgroundColor
+        // The app's block grey behind the list, so each section is one of the
+        // app's white cards instead of white on white.
+        self.view.backgroundColor = self.theme.list.blocksBackgroundColor
+        self.tableView.backgroundColor = .clear
         self.view.addSubview(self.tableView)
-        // The header (transparent, carrying the glass bubbles) is added last so
-        // it draws over the list and the bubble shadows are not clipped at the
-        // list's top edge.
-        self.view.addSubview(self.header)
     }
 
-    func setDiagnostic(_ text: String) {
-        self.diagnosticLabel.text = text
-    }
-
+    /// The pushed controller's navigation bar supplies the title, the back button
+    /// and the plus; the list simply starts below the bar.
     func updateLayout(size: CGSize, topInset: CGFloat) {
-        let barHeight: CGFloat = 44.0
-        let diagnosticHeight: CGFloat = self.diagnosticLabel.text?.isEmpty == false ? 28.0 : 0.0
-        let headerTop = topInset + 8.0
-        let headerHeight = headerTop + barHeight + diagnosticHeight
-        self.header.frame = CGRect(x: 0.0, y: 0.0, width: size.width, height: headerHeight)
-
-        let buttonSize: CGFloat = 52.0
-        let bubbleSize: CGFloat = 44.0
-        let bubbleInset = floor((buttonSize - bubbleSize) / 2.0)
-        let bubbleY = headerTop + floor((barHeight - bubbleSize) / 2.0)
-        let isDark = self.view.traitCollection.userInterfaceStyle == .dark
-        self.leftBubble.frame = CGRect(x: 8.0 + bubbleInset, y: bubbleY, width: bubbleSize, height: bubbleSize)
-        self.leftBubble.update(size: CGSize(width: bubbleSize, height: bubbleSize), cornerRadius: bubbleSize / 2.0, isDark: isDark, tintColor: GlassBackgroundView.TintColor(kind: .panel), isInteractive: false, isVisible: true, transition: .immediate)
-        self.addBubble.frame = CGRect(x: size.width - buttonSize - 8.0 + bubbleInset, y: bubbleY, width: bubbleSize, height: bubbleSize)
-        self.addBubble.update(size: CGSize(width: bubbleSize, height: bubbleSize), cornerRadius: bubbleSize / 2.0, isDark: isDark, tintColor: GlassBackgroundView.TintColor(kind: .panel), isInteractive: false, isVisible: true, transition: .immediate)
-
-        self.titleLabel.sizeToFit()
-        self.titleLabel.frame = CGRect(
-            x: floor((size.width - self.titleLabel.bounds.width) / 2.0),
-            y: headerTop + floor((barHeight - self.titleLabel.bounds.height) / 2.0),
-            width: self.titleLabel.bounds.width,
-            height: self.titleLabel.bounds.height
-        )
-
-        self.leftButton.frame = CGRect(x: 8.0, y: headerTop, width: buttonSize, height: barHeight)
-        self.addButton.frame = CGRect(x: size.width - buttonSize - 8.0, y: headerTop, width: buttonSize, height: barHeight)
-
-        self.diagnosticLabel.frame = CGRect(x: 12.0, y: headerTop + barHeight, width: size.width - 24.0, height: diagnosticHeight)
-
-        self.tableView.frame = CGRect(x: 0.0, y: headerHeight, width: size.width, height: max(0.0, size.height - headerHeight))
+        self.tableView.frame = CGRect(x: 0.0, y: topInset, width: size.width, height: max(0.0, size.height - topInset))
     }
 }
 
@@ -136,11 +64,11 @@ private final class PolySrvServerSelectControllerNode: ASDisplayNode {
 /// a live TCP reachability check. The published ones are read-only; the user's
 /// own can be edited and deleted in place.
 ///
-/// A Display `ViewController`, not a UIKit one: it is shown with
-/// `presentOverlay`, and Display's `NavigationController` deliberately traps on
-/// UIKit `present`. The list is refreshed from the published `servers.json` when
-/// the screen appears, so a server added there shows up on a first build without
-/// shipping a new one.
+/// A Display `ViewController`, pushed onto the presenter's navigation controller
+/// like the app's own settings screens, so it has the app's navigation bar and
+/// the interactive back swipe. The list is refreshed from the published
+/// `servers.json` when the screen appears, so a server added there shows up on a
+/// first build without shipping a new one.
 public final class PolySrvServerSelectController: ViewController, UITableViewDataSource, UITableViewDelegate {
     private enum Section: Int, CaseIterable, Equatable {
         case telegram
@@ -149,59 +77,57 @@ public final class PolySrvServerSelectController: ViewController, UITableViewDat
     }
 
     private var servers: [PolySrvServer]
-    private let account: UnauthorizedAccount?
     private let theme: PresentationTheme
     private let environment: PolySrvServerPickerEnvironment?
+    /// Whether picking a server pops the picker. The pre-login flow has the
+    /// presenter replace it by setting the auth state instead, which a pop here
+    /// would flash the splash before.
+    private let dismissOnSelect: Bool
     private let onSelect: (PolySrvServer) -> Void
-    private let onCancel: () -> Void
-    private let leftButtonTitle: String
 
     private var visibleSections: [Section] = [.telegram, .custom]
     /// Whether each server was reachable on the last probe. A green or red dot,
     /// not a millisecond count: the TCP connect is answered by a local VPN/proxy
     /// when one is in use, so the number measured the tunnel, not the server.
     private var reachabilityByServerId: [String: Bool] = [:]
-    private var diagnosticText: String = ""
     private var validLayout: ContainerViewLayout?
-    private let statusDisposable = MetaDisposable()
 
     private var controllerNode: PolySrvServerSelectControllerNode {
         return self.displayNode as! PolySrvServerSelectControllerNode
     }
 
-    public init(servers: [PolySrvServer], account: UnauthorizedAccount?, theme: PresentationTheme, leftButtonTitle: String = "Cancel", environment: PolySrvServerPickerEnvironment? = nil, onSelect: @escaping (PolySrvServer) -> Void, onCancel: @escaping () -> Void) {
+    public init(servers: [PolySrvServer], theme: PresentationTheme, leftButtonTitle: String = "Back", dismissOnSelect: Bool = true, environment: PolySrvServerPickerEnvironment? = nil, onSelect: @escaping (PolySrvServer) -> Void) {
         self.servers = servers
-        self.account = account
         self.theme = theme
         self.environment = environment
+        self.dismissOnSelect = dismissOnSelect
         self.onSelect = onSelect
-        self.onCancel = onCancel
-        self.leftButtonTitle = leftButtonTitle
-        super.init(navigationBarPresentationData: nil)
+        super.init(navigationBarPresentationData: NavigationBarPresentationData(theme: NavigationBarTheme(rootControllerTheme: theme), strings: NavigationBarStrings(back: leftButtonTitle, close: leftButtonTitle, more: "More")))
+        self.title = "Servers"
     }
 
     public required init(coder aDecoder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
 
-    deinit {
-        self.statusDisposable.dispose()
-    }
-
     public override func loadDisplayNode() {
-        let node = PolySrvServerSelectControllerNode(theme: self.theme, leftButtonTitle: self.leftButtonTitle)
+        let node = PolySrvServerSelectControllerNode(theme: self.theme)
         node.tableView.dataSource = self
         node.tableView.delegate = self
-        node.leftButton.addTarget(self, action: #selector(self.leftPressed), for: .touchUpInside)
-        node.addButton.addTarget(self, action: #selector(self.addPressed), for: .touchUpInside)
         self.displayNode = node
         self.displayNodeDidLoad()
+
+        // The app's navigation bar carries the title, the app's back button (and
+        // the interactive back swipe) and the plus that adds a server.
+        self.navigationItem.rightBarButtonItem = UIBarButtonItem(image: UIImage(systemName: "plus"), style: .plain, target: self, action: #selector(self.addPressed))
+        self.navigationItem.rightBarButtonItem?.accessibilityLabel = "Add Server"
     }
 
     public override func containerLayoutUpdated(_ layout: ContainerViewLayout, transition: ContainedViewLayoutTransition) {
         super.containerLayoutUpdated(layout, transition: transition)
         self.validLayout = layout
-        self.controllerNode.updateLayout(size: layout.size, topInset: max(layout.safeInsets.top, layout.statusBarHeight ?? 24.0))
+        let navigationHeight = self.navigationLayout(layout: layout).navigationFrame.maxY
+        self.controllerNode.updateLayout(size: layout.size, topInset: max(navigationHeight, layout.safeInsets.top))
     }
 
     public override func viewDidAppear(_ animated: Bool) {
@@ -268,52 +194,25 @@ public final class PolySrvServerSelectController: ViewController, UITableViewDat
         }
     }
 
-    private func updateDiagnostic(status: ConnectionStatus? = nil) {
-        var parts: [String] = []
-        if let account = self.account, let server = PolySrvServers.shared.server(forAccount: account.id) {
-            parts.append("\(server.id) · \(server.endpoint) · key \(server.rsaPublicKey.count) · \(server.multiDc ? "multi" : "locked")")
-        } else {
-            parts.append("no server bound")
-        }
-        if let status = status {
-            switch status {
-                case .waitingForNetwork:
-                    parts.append("net: waiting")
-                case .connecting:
-                    parts.append("net: connecting")
-                case .updating:
-                    parts.append("net: updating")
-                case .online:
-                    parts.append("net: online")
-            }
-        }
-        self.diagnosticText = parts.joined(separator: "\n")
-        self.controllerNode.setDiagnostic(self.diagnosticText)
-        if let layout = self.validLayout {
-            self.controllerNode.updateLayout(size: layout.size, topInset: max(layout.safeInsets.top, layout.statusBarHeight ?? 24.0))
-        }
-    }
-
     // MARK: - Actions
-
-    @objc private func leftPressed() {
-        self.dismiss()
-        self.onCancel()
-    }
 
     @objc private func addPressed() {
         self.presentEdit(server: nil)
     }
 
     private func select(_ server: PolySrvServer) {
-        self.dismiss()
+        // A pop here is right whenever someone else is not already replacing this
+        // screen (the pre-login flow sets the auth state, which rebuilds the
+        // stack and would then flash the splash behind a pop).
+        if self.dismissOnSelect {
+            self.dismiss()
+        }
         self.onSelect(server)
     }
 
     private func presentEdit(server: PolySrvServer?) {
-        // Open the form through the presenter, on the window (the way the app's
-        // own input screens are shown). The picker steps out of the way first;
-        // the presenter restores it when the form closes.
+        // The presenter pushes the form on top of the picker, so the picker stays
+        // beneath it and the form's back swipe returns here.
         let completion: (PolySrvServer?) -> Void = { [weak self] _ in
             guard let self = self else {
                 return
@@ -322,13 +221,12 @@ public final class PolySrvServerSelectController: ViewController, UITableViewDat
             self.pingAll()
         }
         if let environment = self.environment {
-            self.dismiss()
             environment.presentEditor(server, completion)
         } else {
             let controller = PolySrvServerEditController(server: server, theme: self.theme, completion: { saved in
                 completion(saved)
             })
-            self.presentInGlobalOverlay(controller)
+            self.push(controller)
         }
     }
 

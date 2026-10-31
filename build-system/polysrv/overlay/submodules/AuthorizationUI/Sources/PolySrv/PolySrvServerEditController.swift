@@ -4,15 +4,14 @@ import AsyncDisplayKit
 import Display
 import TelegramCore
 import TelegramPresentationData
-import GlassBackgroundComponent
 
 /// One labelled text field. The rows are plain views laid out by hand rather
 /// than cells: the form is a fixed list, so there is nothing for a table's reuse
-/// to buy, and a row that lays itself out cannot double-add its field.
+/// to buy, and a row that lays itself out cannot double-add its field. A row
+/// draws no surface of its own; the card it belongs to is the box.
 private final class PolySrvServerEditFieldRow: UIView {
     let label = UILabel()
     let field = UITextField()
-    private let glass = GlassBackgroundView()
 
     init(title: String, keyboard: UIKeyboardType) {
         super.init(frame: .zero)
@@ -22,7 +21,6 @@ private final class PolySrvServerEditFieldRow: UIView {
         self.field.autocorrectionType = .no
         self.field.autocapitalizationType = .none
         self.field.keyboardType = keyboard
-        self.addSubview(self.glass)
         self.addSubview(self.label)
         self.addSubview(self.field)
     }
@@ -33,19 +31,18 @@ private final class PolySrvServerEditFieldRow: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        self.glass.frame = self.bounds
-        self.glass.update(size: self.bounds.size, cornerRadius: 12.0, isDark: self.traitCollection.userInterfaceStyle == .dark, tintColor: GlassBackgroundView.TintColor(kind: .panel), isInteractive: false, isVisible: false, transition: .immediate)
         let labelWidth: CGFloat = 118.0
         self.label.frame = CGRect(x: 16.0, y: 0.0, width: labelWidth, height: self.bounds.height)
         self.field.frame = CGRect(x: 16.0 + labelWidth, y: 0.0, width: max(0.0, self.bounds.width - labelWidth - 32.0), height: self.bounds.height)
     }
 }
 
-/// The RSA public key: it is a PEM, pasted rather than typed.
+/// The RSA public key: it is a PEM, pasted rather than typed. Its text area keeps
+/// a visible field surface of its own, because the whole box is much taller than
+/// a row and an empty one would otherwise read as blank card.
 private final class PolySrvServerEditKeyRow: UIView {
     let label = UILabel()
     let textView = UITextView()
-    private let glass = GlassBackgroundView()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -55,7 +52,6 @@ private final class PolySrvServerEditKeyRow: UIView {
         self.textView.autocorrectionType = .no
         self.textView.autocapitalizationType = .none
         self.textView.backgroundColor = .clear
-        self.addSubview(self.glass)
         self.addSubview(self.label)
         self.addSubview(self.textView)
     }
@@ -66,23 +62,19 @@ private final class PolySrvServerEditKeyRow: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        self.glass.frame = self.bounds
-        self.glass.update(size: self.bounds.size, cornerRadius: 12.0, isDark: self.traitCollection.userInterfaceStyle == .dark, tintColor: GlassBackgroundView.TintColor(kind: .panel), isInteractive: false, isVisible: false, transition: .immediate)
-        self.label.frame = CGRect(x: 16.0, y: 0.0, width: self.bounds.width - 32.0, height: 34.0)
-        self.textView.frame = CGRect(x: 13.0, y: 34.0, width: max(0.0, self.bounds.width - 26.0), height: max(0.0, self.bounds.height - 40.0))
+        self.label.frame = CGRect(x: 16.0, y: 0.0, width: max(0.0, self.bounds.width - 32.0), height: 34.0)
+        self.textView.frame = CGRect(x: 12.0, y: 34.0, width: max(0.0, self.bounds.width - 24.0), height: max(0.0, self.bounds.height - 40.0))
     }
 }
 
 private final class PolySrvServerEditSwitchRow: UIView {
     let label = UILabel()
     let toggle = UISwitch()
-    private let glass = GlassBackgroundView()
 
     init(title: String) {
         super.init(frame: .zero)
         self.label.text = title
         self.label.font = UIFont.systemFont(ofSize: 17.0)
-        self.addSubview(self.glass)
         self.addSubview(self.label)
         self.addSubview(self.toggle)
     }
@@ -93,8 +85,6 @@ private final class PolySrvServerEditSwitchRow: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        self.glass.frame = self.bounds
-        self.glass.update(size: self.bounds.size, cornerRadius: 12.0, isDark: self.traitCollection.userInterfaceStyle == .dark, tintColor: GlassBackgroundView.TintColor(kind: .panel), isInteractive: false, isVisible: false, transition: .immediate)
         self.label.frame = CGRect(x: 16.0, y: 0.0, width: max(0.0, self.bounds.width - 90.0), height: self.bounds.height)
         self.toggle.frame = CGRect(x: self.bounds.width - self.toggle.bounds.width - 16.0, y: floor((self.bounds.height - self.toggle.bounds.height) / 2.0), width: self.toggle.bounds.width, height: self.toggle.bounds.height)
     }
@@ -103,18 +93,10 @@ private final class PolySrvServerEditSwitchRow: UIView {
 private final class PolySrvServerEditControllerNode: ASDisplayNode {
     private let theme: PresentationTheme
     private let identityLocked: Bool
-    private let onSave: () -> Void
-    private let onCancel: () -> Void
 
-    private let header = UIView()
-    private let titleLabel = UILabel()
-    private let cancelButton = UIButton(type: .system)
-    private let saveButton = UIButton(type: .system)
-    private let cancelBubble = GlassBackgroundView()
-    private let saveBubble = GlassBackgroundView()
-    private let messageLabel = UILabel()
     private let scrollView = UIScrollView()
     private let contentView = UIView()
+    private let messageLabel = UILabel()
 
     let nameRow = PolySrvServerEditFieldRow(title: "Name", keyboard: .default)
     let descriptionRow = PolySrvServerEditFieldRow(title: "Description", keyboard: .default)
@@ -124,59 +106,24 @@ private final class PolySrvServerEditControllerNode: ASDisplayNode {
     let keyRow = PolySrvServerEditKeyRow(frame: .zero)
     let multiDcRow = PolySrvServerEditSwitchRow(title: "Multi-datacenter")
 
-    private let rows: [UIView]
+    /// The form's rows, grouped into the blocks the page draws: the rows of one
+    /// group share a card, with hairline separators between them.
+    private var cards: [(card: UIView, rows: [UIView], separators: [UIView])] = []
 
-    init(theme: PresentationTheme, editing: Bool, identityLocked: Bool, onSave: @escaping () -> Void, onCancel: @escaping () -> Void) {
+    init(theme: PresentationTheme, identityLocked: Bool) {
         self.theme = theme
         self.identityLocked = identityLocked
-        self.onSave = onSave
-        self.onCancel = onCancel
-        self.rows = [self.nameRow, self.descriptionRow, self.hostRow, self.portRow, self.mainDcRow, self.keyRow, self.multiDcRow]
         super.init()
-        self.titleLabel.text = editing ? "Edit Server" : "Add Server"
     }
 
     override func didLoad() {
         super.didLoad()
 
-        // The app's list background (grey), so each row's white block is a visible
-        // field box.
-        self.view.backgroundColor = self.theme.list.plainBackgroundColor
-        self.header.backgroundColor = .clear
-        self.contentView.backgroundColor = .clear
+        // The app's block grey behind the form, so each card is a visible box.
+        self.view.backgroundColor = self.theme.list.blocksBackgroundColor
         self.scrollView.backgroundColor = .clear
-
-        // Rows are the app's plain blocks (not glass), with a visible editable
-        // value and a placeholder so the field reads as editable.
-        for row in self.rows {
-            row.backgroundColor = self.theme.list.itemBlocksBackgroundColor
-            row.layer.cornerRadius = 12.0
-            row.clipsToBounds = true
-        }
-        self.nameRow.field.placeholder = "Name"
-        self.descriptionRow.field.placeholder = "Optional"
-        self.hostRow.field.placeholder = "example.com"
-        self.portRow.field.placeholder = "443"
-        self.mainDcRow.field.placeholder = "2"
-
-        // The RSA key is a tall box; give its text area a visible field surface.
-        self.keyRow.textView.backgroundColor = self.theme.list.plainBackgroundColor
-        self.keyRow.textView.layer.cornerRadius = 8.0
-        self.keyRow.textView.clipsToBounds = true
-
-        self.titleLabel.font = UIFont.systemFont(ofSize: 17.0, weight: .semibold)
-        self.titleLabel.textColor = self.theme.list.itemPrimaryTextColor
-
-        // Round glass buttons: a back chevron and a check mark.
-        self.cancelButton.setImage(UIImage(systemName: "chevron.backward"), for: .normal)
-        self.cancelButton.accessibilityLabel = "Back"
-        self.cancelButton.tintColor = self.theme.list.itemPrimaryTextColor
-        self.cancelButton.addTarget(self, action: #selector(self.cancelPressed), for: .touchUpInside)
-
-        self.saveButton.setImage(UIImage(systemName: "checkmark"), for: .normal)
-        self.saveButton.accessibilityLabel = "Save"
-        self.saveButton.tintColor = self.theme.list.itemPrimaryTextColor
-        self.saveButton.addTarget(self, action: #selector(self.savePressed), for: .touchUpInside)
+        self.scrollView.contentInsetAdjustmentBehavior = .never
+        self.contentView.backgroundColor = .clear
 
         self.messageLabel.font = UIFont.systemFont(ofSize: 13.0)
         self.messageLabel.numberOfLines = 0
@@ -184,6 +131,18 @@ private final class PolySrvServerEditControllerNode: ASDisplayNode {
         if self.identityLocked {
             self.messageLabel.text = "An account is signed in to this server, so its address and key cannot be changed."
         }
+
+        self.nameRow.field.placeholder = "Name"
+        self.descriptionRow.field.placeholder = "Optional"
+        self.hostRow.field.placeholder = "example.com"
+        self.portRow.field.placeholder = "443"
+        self.mainDcRow.field.placeholder = "2"
+
+        // The tall key area keeps a field surface of its own, in the block grey
+        // that contrasts with the card it sits on.
+        self.keyRow.textView.backgroundColor = self.theme.list.blocksBackgroundColor
+        self.keyRow.textView.layer.cornerRadius = 8.0
+        self.keyRow.textView.clipsToBounds = true
 
         for row in [self.nameRow, self.descriptionRow, self.hostRow, self.portRow, self.mainDcRow] {
             row.label.textColor = self.theme.list.itemPrimaryTextColor
@@ -201,20 +160,35 @@ private final class PolySrvServerEditControllerNode: ASDisplayNode {
         self.mainDcRow.field.isEnabled = !self.multiDcRow.toggle.isOn
         self.multiDcRow.toggle.addTarget(self, action: #selector(self.multiDcChanged), for: .valueChanged)
 
-        self.header.addSubview(self.cancelBubble)
-        self.header.addSubview(self.saveBubble)
-        self.header.addSubview(self.titleLabel)
-        self.header.addSubview(self.cancelButton)
-        self.header.addSubview(self.saveButton)
-        self.header.addSubview(self.messageLabel)
         self.view.addSubview(self.scrollView)
         self.scrollView.addSubview(self.contentView)
-        for row in self.rows {
-            self.contentView.addSubview(row)
+        self.contentView.addSubview(self.messageLabel)
+
+        let groups: [[UIView]] = [
+            [self.nameRow, self.descriptionRow],
+            [self.hostRow, self.portRow, self.mainDcRow],
+            [self.keyRow],
+            [self.multiDcRow],
+        ]
+        for group in groups {
+            let card = UIView()
+            card.backgroundColor = self.theme.list.itemBlocksBackgroundColor
+            card.layer.cornerRadius = 12.0
+            card.clipsToBounds = true
+            var separators: [UIView] = []
+            for (index, row) in group.enumerated() {
+                row.backgroundColor = .clear
+                card.addSubview(row)
+                if index != 0 {
+                    let separator = UIView()
+                    separator.backgroundColor = self.theme.list.itemBlocksSeparatorColor
+                    card.addSubview(separator)
+                    separators.append(separator)
+                }
+            }
+            self.cards.append((card: card, rows: group, separators: separators))
+            self.contentView.addSubview(card)
         }
-        // Added last so the transparent header (and its glass bubbles) draw over
-        // the scroll view, whose top edge would otherwise clip the shadows.
-        self.view.addSubview(self.header)
     }
 
     func apply(server: PolySrvServer?) {
@@ -240,62 +214,54 @@ private final class PolySrvServerEditControllerNode: ASDisplayNode {
         self.messageLabel.textColor = isError ? self.theme.list.itemDestructiveColor : self.theme.list.itemSecondaryTextColor
     }
 
-    @objc private func cancelPressed() {
-        self.onCancel()
-    }
-
-    @objc private func savePressed() {
-        self.onSave()
-    }
-
     @objc private func multiDcChanged() {
         self.mainDcRow.field.isEnabled = !self.multiDcRow.toggle.isOn && !self.identityLocked
     }
 
-    func updateLayout(size: CGSize, safeInsets: UIEdgeInsets) {
-        let barHeight: CGFloat = 44.0
-        let messageHeight: CGFloat = self.messageLabel.text?.isEmpty == false ? 40.0 : 0.0
-        let topInset = max(safeInsets.top, 47.0) + 12.0
-        let headerHeight = topInset + barHeight + messageHeight
-        self.header.frame = CGRect(x: 0.0, y: 0.0, width: size.width, height: headerHeight)
-
-        self.titleLabel.sizeToFit()
-        self.titleLabel.frame = CGRect(x: floor((size.width - self.titleLabel.bounds.width) / 2.0), y: topInset + floor((barHeight - self.titleLabel.bounds.height) / 2.0), width: self.titleLabel.bounds.width, height: self.titleLabel.bounds.height)
-
-        let buttonSize: CGFloat = 52.0
-        let bubbleSize: CGFloat = 44.0
-        let bubbleInset = floor((buttonSize - bubbleSize) / 2.0)
-        let bubbleY = topInset + floor((barHeight - bubbleSize) / 2.0)
-        let isDark = self.view.traitCollection.userInterfaceStyle == .dark
-
-        self.cancelButton.frame = CGRect(x: 8.0, y: topInset, width: buttonSize, height: barHeight)
-        self.cancelBubble.frame = CGRect(x: 8.0 + bubbleInset, y: bubbleY, width: bubbleSize, height: bubbleSize)
-        self.cancelBubble.update(size: CGSize(width: bubbleSize, height: bubbleSize), cornerRadius: bubbleSize / 2.0, isDark: isDark, tintColor: GlassBackgroundView.TintColor(kind: .panel), isInteractive: false, isVisible: true, transition: .immediate)
-
-        self.saveButton.frame = CGRect(x: size.width - buttonSize - 8.0, y: topInset, width: buttonSize, height: barHeight)
-        self.saveBubble.frame = CGRect(x: size.width - buttonSize - 8.0 + bubbleInset, y: bubbleY, width: bubbleSize, height: bubbleSize)
-        self.saveBubble.update(size: CGSize(width: bubbleSize, height: bubbleSize), cornerRadius: bubbleSize / 2.0, isDark: isDark, tintColor: GlassBackgroundView.TintColor(kind: .panel), isInteractive: false, isVisible: true, transition: .immediate)
-
-        self.messageLabel.frame = CGRect(x: 16.0, y: topInset + barHeight, width: size.width - 32.0, height: messageHeight)
-
-        self.scrollView.frame = CGRect(x: 0.0, y: headerHeight, width: size.width, height: max(0.0, size.height - headerHeight))
+    func updateLayout(size: CGSize, topInset: CGFloat, bottomInset: CGFloat) {
+        self.scrollView.frame = CGRect(x: 0.0, y: topInset, width: size.width, height: max(0.0, size.height - topInset))
+        self.scrollView.contentInset = UIEdgeInsets(top: 0.0, left: 0.0, bottom: bottomInset, right: 0.0)
 
         let rowInset: CGFloat = 16.0
+        let cardWidth = max(0.0, size.width - rowInset * 2.0)
         var y: CGFloat = 12.0
-        for row in self.rows {
-            let height: CGFloat = row === self.keyRow ? 220.0 : 44.0
-            row.frame = CGRect(x: rowInset, y: y, width: max(0.0, size.width - rowInset * 2.0), height: height)
-            y += height + 8.0
+
+        let messageHeight: CGFloat = self.messageLabel.text?.isEmpty == false ? 40.0 : 0.0
+        if messageHeight > 0.0 {
+            self.messageLabel.frame = CGRect(x: rowInset + 4.0, y: y, width: max(0.0, size.width - (rowInset + 4.0) * 2.0), height: messageHeight)
+            y = self.messageLabel.frame.maxY + 4.0
+        } else {
+            self.messageLabel.frame = .zero
         }
-        y += 4.0
+
+        let separatorHeight: CGFloat = 1.0 / max(1.0, UIScreen.main.scale)
+        for card in self.cards {
+            var rowFrames: [CGRect] = []
+            var cardHeight: CGFloat = 0.0
+            for row in card.rows {
+                let height: CGFloat = row === self.keyRow ? 210.0 : 44.0
+                rowFrames.append(CGRect(x: 0.0, y: cardHeight, width: cardWidth, height: height))
+                cardHeight += height
+            }
+            card.card.frame = CGRect(x: rowInset, y: y, width: cardWidth, height: cardHeight)
+            for (index, row) in card.rows.enumerated() {
+                row.frame = rowFrames[index]
+            }
+            for (index, separator) in card.separators.enumerated() {
+                separator.frame = CGRect(x: rowInset, y: rowFrames[index].maxY, width: max(0.0, cardWidth - rowInset), height: separatorHeight)
+            }
+            y = card.card.frame.maxY + 16.0
+        }
+
+        y += 8.0
         self.contentView.frame = CGRect(x: 0.0, y: 0.0, width: size.width, height: y)
         self.scrollView.contentSize = CGSize(width: size.width, height: y)
     }
 }
 
 /// The add/edit form for a custom server: desktop's server box, field for field.
-/// The picker presents it; a save writes through `PolySrvServers` and hands the
-/// saved record back so the list can be rebuilt.
+/// The picker pushes it on top of itself; a save writes through `PolySrvServers`
+/// and hands the saved record back so the list can be rebuilt.
 public final class PolySrvServerEditController: ViewController {
     private let server: PolySrvServer?
     private let theme: PresentationTheme
@@ -310,7 +276,8 @@ public final class PolySrvServerEditController: ViewController {
         self.server = server
         self.theme = theme
         self.completion = completion
-        super.init(navigationBarPresentationData: nil)
+        super.init(navigationBarPresentationData: NavigationBarPresentationData(theme: NavigationBarTheme(rootControllerTheme: theme), strings: NavigationBarStrings(back: "Back", close: "Cancel", more: "More")))
+        self.title = server == nil ? "Add Server" : "Edit Server"
     }
 
     public required init(coder aDecoder: NSCoder) {
@@ -319,23 +286,28 @@ public final class PolySrvServerEditController: ViewController {
 
     public override func loadDisplayNode() {
         let identityLocked = self.server.map { !PolySrvServers.shared.canEditIdentity(of: $0.id) } ?? false
-        let node = PolySrvServerEditControllerNode(theme: self.theme, editing: self.server != nil, identityLocked: identityLocked, onSave: { [weak self] in
-            self?.savePressed()
-        }, onCancel: { [weak self] in
-            self?.completion(nil)
-            self?.dismiss()
-        })
+        let node = PolySrvServerEditControllerNode(theme: self.theme, identityLocked: identityLocked)
         self.displayNode = node
         node.apply(server: self.server)
         self.displayNodeDidLoad()
+
+        // The app's navigation bar carries the title, the app's back button (and
+        // the interactive back swipe, which cancels) and the check that saves.
+        self.navigationItem.rightBarButtonItem = UIBarButtonItem(image: UIImage(systemName: "checkmark"), style: .plain, target: self, action: #selector(self.savePressed))
+        self.navigationItem.rightBarButtonItem?.accessibilityLabel = "Save"
     }
 
     public override func containerLayoutUpdated(_ layout: ContainerViewLayout, transition: ContainedViewLayoutTransition) {
         super.containerLayoutUpdated(layout, transition: transition)
-        self.controllerNode.updateLayout(size: layout.size, safeInsets: layout.safeInsets)
+        let navigationHeight = self.navigationLayout(layout: layout).navigationFrame.maxY
+        // Display reports the keyboard as the layout's input height, not in the
+        // safe insets, so the form's scroll view is inset by it and the focused
+        // field can be brought above the keyboard.
+        let bottomInset = max(layout.inputHeight ?? 0.0, layout.safeInsets.bottom)
+        self.controllerNode.updateLayout(size: layout.size, topInset: max(navigationHeight, layout.safeInsets.top), bottomInset: bottomInset)
     }
 
-    private func savePressed() {
+    @objc private func savePressed() {
         let node = self.controllerNode
         let name = node.nameRow.field.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let description = node.descriptionRow.field.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""

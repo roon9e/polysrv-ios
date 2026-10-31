@@ -22,13 +22,16 @@ private final class PolySrvAccountsControllerNode: ASDisplayNode {
         self.theme = theme
         self.tableView = UITableView(frame: .zero, style: .insetGrouped)
         super.init()
+        self.tableView.contentInsetAdjustmentBehavior = .never
     }
 
     override func didLoad() {
         super.didLoad()
 
-        self.view.backgroundColor = self.theme.list.plainBackgroundColor
-        self.tableView.backgroundColor = self.theme.list.plainBackgroundColor
+        // The app's block grey behind the list, so each server's group is its own
+        // white card instead of white on white.
+        self.view.backgroundColor = self.theme.list.blocksBackgroundColor
+        self.tableView.backgroundColor = .clear
         self.view.addSubview(self.tableView)
     }
 

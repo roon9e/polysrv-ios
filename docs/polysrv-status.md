@@ -281,15 +281,24 @@ the publish job's `GH_TOKEN` rather than loosening the repo setting, or just
 * **Never edit upstream files in the working tree.** The feature lives in
   `build-system/polysrv/overlay/**` and `build-system/polysrv/edits.py`, applied
   by `apply_polysrv.py` at build time. A missing anchor is a hard failure (good).
-* **`presentOverlay`, not `present`, above the picker.** The picker is a *global*
-  overlay, so anything that must appear over it has to be a global overlay too
-  (`ViewController.presentInGlobalOverlay`, or
-  `NavigationController.presentOverlay(inGlobal: true)`). `.window(.root)` is a
+* **The picker and the server form are *pushed*, not overlays.** Swipe-to-go-back
+  is `NavigationContainer`'s pop and it needs `controllers.count > 1`, so the
+  picker and the form are pushed onto the presenter's navigation controller and
+  get the app's navigation bar; the form is pushed *on top of the picker*, so its
+  back swipe returns to the picker. An overlay container has no pan recogniser at
+  all, which is why the earlier overlay/window presentation had neither a back
+  swipe nor a bar. Anything that must appear **over** a pushed screen is a global
+  overlay (`ViewController.presentInGlobalOverlay`, or
+  `NavigationController.presentOverlay(inGlobal: true)`); `.window(.root)` is a
   local overlay and renders **below** the global containers.
 * **`AuthorizationSequenceController` is a `NavigationController`, not a
   `ViewController`** — it has `presentOverlay`/`currentWindow` but no
   `present(_:in:)`. `Display.NavigationController` also traps on a UIKit-style
-  `present(_:animated:)` from a non-UIKit context; present through the overlay.
+  `present(_:animated:)` from a non-UIKit context; push, or present through the
+  overlay. Its stack is rebuilt from the auth state on every state change, so a
+  pushed screen is removed by `setViewControllers` when the state moves on (which
+  is why the pre-login picker passes `dismissOnSelect: false` rather than popping
+  itself, which would flash the splash first).
 * **A `count: "all"` edit is not idempotent against an already-patched tree:** its
   `old` anchor still matches after the first application, so re-applying to a
   patched tree duplicates lines. Always start from a pristine checkout (CI does).
