@@ -310,13 +310,22 @@ the publish job's `GH_TOKEN` rather than loosening the repo setting, or just
 * **Keep the golden cache key as `versions.json` + `.bazelrc`.** The version bump
   to 13.1.2 changes that hash, so the next build is a *cold* one (all misses)
   until the new key is seeded — expected, not a regression.
-* **The picker's dot is the app's own connection state, not a probe.** A TCP
-  connect to a Telegram DC completes behind a DPI block (the handshake is not what
-  gets cut), so a probe dot showed green for a server the app could not actually
-  use. The dot now reads `network.connectionStatus` of the account bound to that
-  server (green `.online`, amber `.connecting`/`.updating`, red
-  `.waitingForNetwork`, **grey with no account**), fed from
-  `SharedAccountContext.activeAccountsWithInfo`; the TCP probe is gone.
+* **The picker carries no connection dot, and cannot cheaply.** A TCP connect to
+  a Telegram DC completes behind a DPI block (the handshake is not what gets cut),
+  so a probe dot read green for a server the app could not use. The obvious
+  replacement - `network.connectionStatus` - is no better: the app keeps a live
+  network for the *service task master* account only (`AccountManager` sets
+  `.always` for the primary and `.never` for the rest, and `Account` wires
+  `network.shouldKeepConnection` to it), so every other account sits at
+  `.waitingForNetwork` however reachable its server is - a dot drawn from it went
+  red on every row. A truthful per-server answer needs a probe that speaks
+  MTProto (its own `Network` built against that server, or a hand-written
+  handshake), which is not worth its cost in a server list; the row shows no
+  state at all.
+* **The picker's row shows a server's description in place of `host:port`** when
+  the server carries one, and hides a *published* entry whose `host:port` matches
+  one of the user's own servers: the list keys by id, so the same server added by
+  hand and published would otherwise appear twice.
 * **A row's animation cache and sticker resolution must be the row's own
   account's.** `AccountContext.animationCache` is per account
   (`DCTAnimationCacheImpl(basePath: engine.resources.mediaBasePath + "/animation-cache")`)
