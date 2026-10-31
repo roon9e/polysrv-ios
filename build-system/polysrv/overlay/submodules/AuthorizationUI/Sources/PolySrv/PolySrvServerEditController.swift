@@ -191,6 +191,17 @@ private final class PolySrvServerEditControllerNode: ASDisplayNode {
         }
     }
 
+    /// The RSA key is a PEM of a dozen lines or more, so the box is as tall as
+    /// the text: at least 210 pt (an empty form still reads as a field) and at
+    /// most `maxHeight`, past which the text area scrolls rather than eating the
+    /// whole page.
+    private func keyRowHeight(cardWidth: CGFloat, maxHeight: CGFloat) -> CGFloat {
+        let textWidth = max(1.0, cardWidth - 24.0)
+        let textHeight = self.keyRow.textView.sizeThatFits(CGSize(width: textWidth, height: .greatestFiniteMagnitude)).height
+        let height = max(210.0, ceil(textHeight) + 44.0)
+        return min(height, max(210.0, floor(maxHeight)))
+    }
+
     func apply(server: PolySrvServer?) {
         guard let server = server else {
             self.portRow.field.text = "443"
@@ -235,11 +246,12 @@ private final class PolySrvServerEditControllerNode: ASDisplayNode {
         }
 
         let separatorHeight: CGFloat = 1.0 / max(1.0, UIScreen.main.scale)
+        let keyRowHeight = self.keyRowHeight(cardWidth: cardWidth, maxHeight: size.height * 0.45)
         for card in self.cards {
             var rowFrames: [CGRect] = []
             var cardHeight: CGFloat = 0.0
             for row in card.rows {
-                let height: CGFloat = row === self.keyRow ? 210.0 : 44.0
+                let height: CGFloat = row === self.keyRow ? keyRowHeight : 44.0
                 rowFrames.append(CGRect(x: 0.0, y: cardHeight, width: cardWidth, height: height))
                 cardHeight += height
             }
@@ -293,7 +305,12 @@ public final class PolySrvServerEditController: ViewController {
 
         // The app's navigation bar carries the title, the app's back button (and
         // the interactive back swipe, which cancels) and the check that saves.
-        self.navigationItem.rightBarButtonItem = UIBarButtonItem(image: UIImage(systemName: "checkmark"), style: .plain, target: self, action: #selector(self.savePressed))
+        // The check is drawn in the bar's own button colour: the bar only tints an
+        // item image it recognises as a template and an SF Symbol does not come
+        // through as one here, so the colour is baked in rather than left to the
+        // window's accent (blue).
+        let barButtonColor = NavigationBarTheme(rootControllerTheme: self.theme).buttonColor
+        self.navigationItem.rightBarButtonItem = UIBarButtonItem(image: UIImage(systemName: "checkmark")?.withTintColor(barButtonColor, renderingMode: .alwaysOriginal), style: .plain, target: self, action: #selector(self.savePressed))
         self.navigationItem.rightBarButtonItem?.accessibilityLabel = "Save"
     }
 
@@ -307,6 +324,14 @@ public final class PolySrvServerEditController: ViewController {
         self.controllerNode.updateLayout(size: layout.size, topInset: max(navigationHeight, layout.safeInsets.top), bottomInset: bottomInset)
     }
 
+    /// The form's message line, laid out at once: the label is only given a frame
+    /// by `updateLayout`, so a refusal that is not followed by a layout pass would
+    /// never be seen.
+    private func setMessage(_ text: String, isError: Bool) {
+        self.controllerNode.setMessage(text, isError: isError)
+        self.requestLayout(transition: .immediate)
+    }
+
     @objc private func savePressed() {
         let node = self.controllerNode
         let name = node.nameRow.field.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -318,19 +343,19 @@ public final class PolySrvServerEditController: ViewController {
         let key = node.keyRow.textView.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
         if name.isEmpty {
-            node.setMessage("A server needs a name.", isError: true)
+            self.setMessage("A server needs a name.", isError: true)
             return
         }
         if host.isEmpty {
-            node.setMessage("A server needs an address.", isError: true)
+            self.setMessage("A server needs an address.", isError: true)
             return
         }
         if port < 1 || port > 65535 {
-            node.setMessage("The port has to be between 1 and 65535.", isError: true)
+            self.setMessage("The port has to be between 1 and 65535.", isError: true)
             return
         }
         if !multiDc && (mainDc < 1 || mainDc > 5) {
-            node.setMessage("The main datacenter has to be between 1 and 5.", isError: true)
+            self.setMessage("The main datacenter has to be between 1 and 5.", isError: true)
             return
         }
 

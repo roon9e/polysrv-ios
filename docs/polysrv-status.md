@@ -310,6 +310,26 @@ the publish job's `GH_TOKEN` rather than loosening the repo setting, or just
 * **Keep the golden cache key as `versions.json` + `.bazelrc`.** The version bump
   to 13.1.2 changes that hash, so the next build is a *cold* one (all misses)
   until the new key is seeded — expected, not a regression.
+* **The picker's dot is the app's own connection state, not a probe.** A TCP
+  connect to a Telegram DC completes behind a DPI block (the handshake is not what
+  gets cut), so a probe dot showed green for a server the app could not actually
+  use. The dot now reads `network.connectionStatus` of the account bound to that
+  server (green `.online`, amber `.connecting`/`.updating`, red
+  `.waitingForNetwork`, **grey with no account**), fed from
+  `SharedAccountContext.activeAccountsWithInfo`; the TCP probe is gone.
+* **A row's animation cache and sticker resolution must be the row's own
+  account's.** `AccountContext.animationCache` is per account
+  (`DCTAnimationCacheImpl(basePath: engine.resources.mediaBasePath + "/animation-cache")`)
+  and `resolveInlineStickers` resolves through one account's network and postbox.
+  The accounts list built its row context from the *presenting* screen's account,
+  so an emoji or gift status belonging to another account (one on another server)
+  resolved against the wrong store and drew nothing - the gift's particle effect
+  showed while its model never did. Use `peerAccountContext`, not `context`.
+* **A bar button item's image is not tinted by the bar.** `navigationBarButton`
+  only applies the bar colour when `image.renderingMode == .alwaysTemplate`, and
+  an SF Symbol from `UIImage(systemName:)` does not come through as one here, so
+  it falls back to the window's accent (blue). Bake the colour in with
+  `withTintColor(NavigationBarTheme(rootControllerTheme: theme).buttonColor, renderingMode: .alwaysOriginal)`.
 * **The seed deliberately does not inject credentials** (they reach only
   `BuildConfig`'s copts, ~3 actions) so the retained cache never holds the
   api_hash.

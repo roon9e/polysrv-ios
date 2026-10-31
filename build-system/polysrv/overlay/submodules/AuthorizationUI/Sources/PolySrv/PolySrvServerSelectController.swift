@@ -2,9 +2,10 @@ import Foundation
 import UIKit
 import AsyncDisplayKit
 import Display
-import Network
+import SwiftSignalKit
 import TelegramCore
 import TelegramPresentationData
+import AccountContext
 import AppBundle
 
 /// What the picker needs from whoever presents it, because a deletion has to log
@@ -61,8 +62,9 @@ private final class PolySrvServerSelectControllerNode: ASDisplayNode {
 
 /// The server picker: the official cloud, the servers the user added, and the
 /// servers published on gh-pages, each row with its own image, its endpoint and
-/// a live TCP reachability check. The published ones are read-only; the user's
-/// own can be edited and deleted in place.
+/// the app's own connection state for the accounts that live on it. The
+/// published ones are read-only; the user's own can be edited and deleted in
+/// place.
 ///
 /// A Display `ViewController`, pushed onto the presenter's navigation controller
 /// like the app's own settings screens, so it has the app's navigation bar and
@@ -79,6 +81,7 @@ public final class PolySrvServerSelectController: ViewController, UITableViewDat
     private var servers: [PolySrvServer]
     private let theme: PresentationTheme
     private let environment: PolySrvServerPickerEnvironment?
+    private let sharedContext: SharedAccountContext?
     /// Whether picking a server pops the picker. The pre-login flow has the
     /// presenter replace it by setting the auth state instead, which a pop here
     /// would flash the splash before.
@@ -86,20 +89,24 @@ public final class PolySrvServerSelectController: ViewController, UITableViewDat
     private let onSelect: (PolySrvServer) -> Void
 
     private var visibleSections: [Section] = [.telegram, .custom]
-    /// Whether each server was reachable on the last probe. A green or red dot,
-    /// not a millisecond count: the TCP connect is answered by a local VPN/proxy
-    /// when one is in use, so the number measured the tunnel, not the server.
-    private var reachabilityByServerId: [String: Bool] = [:]
+    /// What the app's own network says about each server, for the accounts that
+    /// are signed in to it. A TCP connect cannot tell a blocked server from a
+    /// reachable one (the handshake completes either way), so the dot shows what
+    /// the app itself is experiencing: online, still connecting, or no network.
+    /// A server nobody is signed in to is grey, not green.
+    private var connectionStatuses: [String: ConnectionStatus] = [:]
     private var validLayout: ContainerViewLayout?
+    private let statusDisposable = MetaDisposable()
 
     private var controllerNode: PolySrvServerSelectControllerNode {
         return self.displayNode as! PolySrvServerSelectControllerNode
     }
 
-    public init(servers: [PolySrvServer], theme: PresentationTheme, leftButtonTitle: String = "Back", dismissOnSelect: Bool = true, environment: PolySrvServerPickerEnvironment? = nil, onSelect: @escaping (PolySrvServer) -> Void) {
+    public init(servers: [PolySrvServer], theme: PresentationTheme, leftButtonTitle: String = "Back", dismissOnSelect: Bool = true, sharedContext: SharedAccountContext? = nil, environment: PolySrvServerPickerEnvironment? = nil, onSelect: @escaping (PolySrvServer) -> Void) {
         self.servers = servers
         self.theme = theme
         self.environment = environment
+        self.sharedContext = sharedContext
         self.dismissOnSelect = dismissOnSelect
         self.onSelect = onSelect
         super.init(navigationBarPresentationData: NavigationBarPresentationData(theme: NavigationBarTheme(rootControllerTheme: theme), strings: NavigationBarStrings(back: leftButtonTitle, close: leftButtonTitle, more: "More")))
@@ -108,6 +115,10 @@ public final class PolySrvServerSelectController: ViewController, UITableViewDat
 
     public required init(coder aDecoder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    deinit {
+        self.statusDisposable.dispose()
     }
 
     public override func loadDisplayNode() {
@@ -119,8 +130,62 @@ public final class PolySrvServerSelectController: ViewController, UITableViewDat
 
         // The app's navigation bar carries the title, the app's back button (and
         // the interactive back swipe) and the plus that adds a server.
-        self.navigationItem.rightBarButtonItem = UIBarButtonItem(image: UIImage(systemName: "plus"), style: .plain, target: self, action: #selector(self.addPressed))
+        self.navigationItem.rightBarButtonItem = UIBarButtonItem(image: PolySrvServerSelectController.barButtonImage(name: "plus", theme: self.theme), style: .plain, target: self, action: #selector(self.addPressed))
         self.navigationItem.rightBarButtonItem?.accessibilityLabel = "Add Server"
+
+        if let sharedContext = self.sharedContext {
+            self.statusDisposable.set((PolySrvServerSelectController.connectionStatuses(sharedContext: sharedContext)
+            |> deliverOnMainQueue).start(next: { [weak self] statuses in
+                guard let self = self else {
+                    return
+                }
+                if self.connectionStatuses == statuses {
+                    return
+                }
+                self.connectionStatuses = statuses
+                self.controllerNode.tableView.reloadData()
+            }))
+        }
+    }
+
+    /// A bar button drawn in the colour the navigation bar uses for its own
+    /// buttons. The bar only tints an item image it recognises as a template and
+    /// an SF Symbol does not come through as one here, so the image would
+    /// otherwise take the window's accent (blue); the colour is baked in instead.
+    private static func barButtonImage(name: String, theme: PresentationTheme) -> UIImage? {
+        let color = NavigationBarTheme(rootControllerTheme: theme).buttonColor
+        return UIImage(systemName: name)?.withTintColor(color, renderingMode: .alwaysOriginal)
+    }
+
+    /// Per server, the connection state the app has for the account bound to it.
+    /// Only accounts that are signed in to a server contribute: an unbound server
+    /// has nothing to report and draws grey.
+    private static func connectionStatuses(sharedContext: SharedAccountContext) -> Signal<[String: ConnectionStatus], NoError> {
+        return sharedContext.activeAccountsWithInfo
+        |> mapToSignal { value -> Signal<[String: ConnectionStatus], NoError> in
+            var signals: [Signal<(String, ConnectionStatus), NoError>] = []
+            for info in value.accounts {
+                guard let server = PolySrvServers.shared.server(forAccount: info.account.id) else {
+                    continue
+                }
+                let serverId = server.id
+                signals.append(info.account.network.connectionStatus
+                |> map { status in
+                    return (serverId, status)
+                })
+            }
+            if signals.isEmpty {
+                return .single([:])
+            }
+            return combineLatest(signals)
+            |> map { pairs -> [String: ConnectionStatus] in
+                var result: [String: ConnectionStatus] = [:]
+                for (serverId, status) in pairs {
+                    result[serverId] = status
+                }
+                return result
+            }
+        }
     }
 
     public override func containerLayoutUpdated(_ layout: ContainerViewLayout, transition: ContainedViewLayoutTransition) {
@@ -143,11 +208,8 @@ public final class PolySrvServerSelectController: ViewController, UITableViewDat
                     return
                 }
                 self.reloadServers()
-                self.pingAll()
             }
         }
-
-        self.pingAll()
     }
 
     // MARK: - List
@@ -156,12 +218,6 @@ public final class PolySrvServerSelectController: ViewController, UITableViewDat
         self.servers = PolySrvServers.shared.allServers()
         self.visibleSections = [.telegram, .custom] + (self.publishedServers.isEmpty ? [] : [.published])
         self.controllerNode.tableView.reloadData()
-    }
-
-    private func pingAll() {
-        for server in self.servers {
-            self.ping(server)
-        }
     }
 
     private var telegramServer: PolySrvServer? {
@@ -218,7 +274,6 @@ public final class PolySrvServerSelectController: ViewController, UITableViewDat
                 return
             }
             self.reloadServers()
-            self.pingAll()
         }
         if let environment = self.environment {
             environment.presentEditor(server, completion)
@@ -311,11 +366,11 @@ public final class PolySrvServerSelectController: ViewController, UITableViewDat
             detail += " · no longer published"
         }
         cell.detailTextLabel?.text = detail
-        // The reachability dot replaces the disclosure arrow (setting accessoryType
+        // The connection dot replaces the disclosure arrow (setting accessoryType
         // after accessoryView would drop the custom view).
         cell.accessoryType = .none
-        cell.accessoryView = PolySrvServerSelectController.reachabilityDot(
-            reachable: self.reachabilityByServerId[server.id],
+        cell.accessoryView = PolySrvServerSelectController.connectionDot(
+            status: self.connectionStatuses[server.id],
             theme: self.theme
         )
         return cell
@@ -419,83 +474,27 @@ public final class PolySrvServerSelectController: ViewController, UITableViewDat
         }
     }
 
-    /// A small reachability dot: green when the last probe connected, red when it
-    /// did not, grey before the first probe.
-    private static func reachabilityDot(reachable: Bool?, theme: PresentationTheme) -> UIView {
+    /// The app's own connection state for a server: green when the account on it
+    /// is online, amber while it is still connecting, red with no network, and
+    /// grey when nobody is signed in to it and there is nothing to report.
+    private static func connectionDot(status: ConnectionStatus?, theme: PresentationTheme) -> UIView {
         let size: CGFloat = 10.0
         let container = UIView(frame: CGRect(x: 0.0, y: 0.0, width: size + 16.0, height: size))
         let dot = UIView(frame: CGRect(x: 0.0, y: 0.0, width: size, height: size))
         dot.layer.cornerRadius = size / 2.0
-        dot.backgroundColor = reachable == nil ? theme.list.itemSecondaryTextColor : (reachable == true ? UIColor(red: 0.20, green: 0.78, blue: 0.35, alpha: 1.0) : UIColor(red: 1.0, green: 0.23, blue: 0.19, alpha: 1.0))
+        let color: UIColor
+        switch status {
+            case .none:
+                color = theme.list.itemSecondaryTextColor
+            case .some(.online):
+                color = UIColor(red: 0.20, green: 0.78, blue: 0.35, alpha: 1.0)
+            case .some(.connecting), .some(.updating):
+                color = UIColor(red: 0.98, green: 0.68, blue: 0.18, alpha: 1.0)
+            case .some(.waitingForNetwork):
+                color = UIColor(red: 1.0, green: 0.23, blue: 0.19, alpha: 1.0)
+        }
+        dot.backgroundColor = color
         container.addSubview(dot)
         return container
-    }
-
-    // MARK: - Ping
-
-    private func ping(_ server: PolySrvServer) {
-        // For the official cloud, probe a known datacenter so the row shows whether
-        // this device can reach Telegram at all (a system VPN may or may not route
-        // it); a custom server is probed at its own address.
-        let host: String
-        let port: Int
-        if server.isTelegram {
-            host = "149.154.167.50"
-            port = 443
-        } else {
-            host = server.host
-            port = server.port
-        }
-        guard let nwPort = NWEndpoint.Port(rawValue: UInt16(clamping: port)) else {
-            return
-        }
-        let connection = NWConnection(host: NWEndpoint.Host(host), port: nwPort, using: .tcp)
-        let queue = DispatchQueue(label: "polysrv.ping")
-        var finished = false
-        let finish: (Bool) -> Void = { [weak self] ok in
-            if finished {
-                return
-            }
-            finished = true
-            connection.cancel()
-            DispatchQueue.main.async {
-                guard let self = self else {
-                    return
-                }
-                self.reachabilityByServerId[server.id] = ok
-                for (section, kind) in self.visibleSections.enumerated() {
-                    let row: Int?
-                    switch kind {
-                        case .telegram:
-                            row = self.telegramServer?.id == server.id ? 0 : nil
-                        case .custom:
-                            row = self.customServers.firstIndex(where: { $0.id == server.id })
-                        case .published:
-                            row = self.publishedServers.firstIndex(where: { $0.id == server.id })
-                    }
-                    if let row = row {
-                        let indexPath = IndexPath(row: row, section: section)
-                        if indexPath.section < self.controllerNode.tableView.numberOfSections, indexPath.row < self.controllerNode.tableView.numberOfRows(inSection: indexPath.section) {
-                            self.controllerNode.tableView.reloadRows(at: [indexPath], with: .none)
-                            return
-                        }
-                    }
-                }
-            }
-        }
-        connection.stateUpdateHandler = { state in
-            switch state {
-                case .ready:
-                    finish(true)
-                case .failed, .cancelled:
-                    finish(false)
-                default:
-                    break
-            }
-        }
-        connection.start(queue: queue)
-        queue.asyncAfter(deadline: .now() + 3.0) {
-            finish(false)
-        }
     }
 }
