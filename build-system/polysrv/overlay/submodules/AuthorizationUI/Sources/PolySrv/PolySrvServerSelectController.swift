@@ -91,7 +91,7 @@ public final class PolySrvServerSelectController: ViewController, UITableViewDat
     private let dismissOnSelect: Bool
     private let onSelect: (PolySrvServer) -> Void
 
-    private var visibleSections: [Section] = [.telegram, .custom]
+    private var visibleSections: [Section] = [.telegram]
     private var validLayout: ContainerViewLayout?
 
     private var controllerNode: PolySrvServerSelectControllerNode {
@@ -162,7 +162,17 @@ public final class PolySrvServerSelectController: ViewController, UITableViewDat
 
     private func reloadServers() {
         self.servers = PolySrvServers.shared.allServers()
-        self.visibleSections = [.telegram, .custom] + (self.publishedServers.isEmpty ? [] : [.published])
+        // Only the sections that have rows. An empty "Your servers" would be a
+        // header over nothing, and the picker's own plus button already says a
+        // server can be added.
+        var sections: [Section] = [.telegram]
+        if !self.customServers.isEmpty {
+            sections.append(.custom)
+        }
+        if !self.publishedServers.isEmpty {
+            sections.append(.published)
+        }
+        self.visibleSections = sections
         self.controllerNode.tableView.reloadData()
     }
 
