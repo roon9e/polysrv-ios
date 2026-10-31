@@ -231,19 +231,20 @@ private final class PolySrvServerEditControllerNode: ASDisplayNode {
     func updateLayout(size: CGSize, safeInsets: UIEdgeInsets) {
         let barHeight: CGFloat = 44.0
         let messageHeight: CGFloat = self.messageLabel.text?.isEmpty == false ? 40.0 : 0.0
-        let headerHeight = safeInsets.top + barHeight + messageHeight
+        let topInset = max(safeInsets.top, 24.0) + 8.0
+        let headerHeight = topInset + barHeight + messageHeight
         self.header.frame = CGRect(x: 0.0, y: 0.0, width: size.width, height: headerHeight)
 
         self.titleLabel.sizeToFit()
-        self.titleLabel.frame = CGRect(x: floor((size.width - self.titleLabel.bounds.width) / 2.0), y: safeInsets.top + floor((barHeight - self.titleLabel.bounds.height) / 2.0), width: self.titleLabel.bounds.width, height: self.titleLabel.bounds.height)
+        self.titleLabel.frame = CGRect(x: floor((size.width - self.titleLabel.bounds.width) / 2.0), y: topInset + floor((barHeight - self.titleLabel.bounds.height) / 2.0), width: self.titleLabel.bounds.width, height: self.titleLabel.bounds.height)
 
         self.cancelButton.sizeToFit()
-        self.cancelButton.frame = CGRect(x: 16.0, y: safeInsets.top + floor((barHeight - self.cancelButton.bounds.height) / 2.0), width: self.cancelButton.bounds.width, height: self.cancelButton.bounds.height)
+        self.cancelButton.frame = CGRect(x: 16.0, y: topInset + floor((barHeight - self.cancelButton.bounds.height) / 2.0), width: self.cancelButton.bounds.width, height: self.cancelButton.bounds.height)
 
         self.saveButton.sizeToFit()
-        self.saveButton.frame = CGRect(x: size.width - self.saveButton.bounds.width - 16.0, y: safeInsets.top + floor((barHeight - self.saveButton.bounds.height) / 2.0), width: self.saveButton.bounds.width, height: self.saveButton.bounds.height)
+        self.saveButton.frame = CGRect(x: size.width - self.saveButton.bounds.width - 16.0, y: topInset + floor((barHeight - self.saveButton.bounds.height) / 2.0), width: self.saveButton.bounds.width, height: self.saveButton.bounds.height)
 
-        self.messageLabel.frame = CGRect(x: 16.0, y: safeInsets.top + barHeight, width: size.width - 32.0, height: messageHeight)
+        self.messageLabel.frame = CGRect(x: 16.0, y: topInset + barHeight, width: size.width - 32.0, height: messageHeight)
 
         self.scrollView.frame = CGRect(x: 0.0, y: headerHeight, width: size.width, height: max(0.0, size.height - headerHeight))
 
