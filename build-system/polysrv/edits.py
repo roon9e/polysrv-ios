@@ -999,7 +999,7 @@ EDITS = [
             "        \n"
             "        // PolySRV: always reachable, even with a single account, so every\n"
             "        // account from every server can be seen and switched between.\n"
-            "        items[.accounts]!.append(PeerInfoScreenActionItem(id: 101, text: \"All Accounts\", icon: UIImage(bundleImageName: \"Call/Accounts\"), action: {\n"
+            "        items[.accounts]!.append(PeerInfoScreenActionItem(id: 101, text: \"All Accounts\", icon: UIImage(bundleImageName: \"Item List/InlineIconUsers\"), action: {\n"
             "            if let navigationController = context.sharedContext.mainWindow?.viewController as? NavigationController {\n"
             "                navigationController.pushViewController(PolySrvAccountsController(context: context))\n"
             "            }\n"
@@ -1108,6 +1108,7 @@ EDITS = [
         "new": (
             "        \"//submodules/TelegramUI/Components/GlassBarButtonComponent\",\n"
             "        \"//submodules/TelegramUI/Components/GlassBackgroundComponent\",\n"
+            "        \"//submodules/AppBundle\",\n"
         ),
     },
     # PolySRV: the per-server account blocks are their own sections, so the
@@ -1129,7 +1130,7 @@ EDITS = [
             "                    // PolySRV: the per-server account blocks sit a little\n"
             "                    // closer together than the app's own sections.\n"
             "                    if let polySrvSectionId = sectionId as? String, polySrvSectionId.hasPrefix(\"polysrv-accounts-\") {\n"
-            "                        contentHeight += 10.0\n"
+            "                        contentHeight += 4.0\n"
             "                    } else {\n"
             "                        contentHeight += sectionSpacing\n"
             "                    }\n"

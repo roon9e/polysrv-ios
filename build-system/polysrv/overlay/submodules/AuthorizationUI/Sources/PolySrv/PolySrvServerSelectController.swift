@@ -7,6 +7,7 @@ import SwiftSignalKit
 import TelegramCore
 import TelegramPresentationData
 import GlassBackgroundComponent
+import AppBundle
 
 /// What the picker needs from whoever presents it, because a deletion has to log
 /// out the accounts that are bound to the server being deleted and that is a
@@ -40,7 +41,8 @@ private final class PolySrvServerSelectControllerNode: ASDisplayNode {
     let leftButton: UIButton
     let addButton: UIButton
     private let header = UIView()
-    private let barGlass = GlassBackgroundView()
+    private let leftBubble = GlassBackgroundView()
+    private let addBubble = GlassBackgroundView()
     private let titleLabel = UILabel()
     private let diagnosticLabel = UILabel()
 
@@ -64,7 +66,6 @@ private final class PolySrvServerSelectControllerNode: ASDisplayNode {
         self.view.backgroundColor = self.theme.list.plainBackgroundColor
         self.header.backgroundColor = .clear
 
-        self.view.addSubview(self.barGlass)
         self.view.addSubview(self.header)
 
         self.titleLabel.text = "Servers"
@@ -76,9 +77,11 @@ private final class PolySrvServerSelectControllerNode: ASDisplayNode {
         self.diagnosticLabel.textAlignment = .center
         self.diagnosticLabel.numberOfLines = 2
 
-        self.leftButton.tintColor = self.theme.list.itemAccentColor
-        self.addButton.tintColor = self.theme.list.itemAccentColor
+        self.leftButton.tintColor = self.theme.list.itemPrimaryTextColor
+        self.addButton.tintColor = self.theme.list.itemPrimaryTextColor
 
+        self.header.addSubview(self.leftBubble)
+        self.header.addSubview(self.addBubble)
         self.header.addSubview(self.titleLabel)
         self.header.addSubview(self.leftButton)
         self.header.addSubview(self.addButton)
@@ -99,11 +102,15 @@ private final class PolySrvServerSelectControllerNode: ASDisplayNode {
         let headerHeight = headerTop + barHeight + diagnosticHeight
         self.header.frame = CGRect(x: 0.0, y: 0.0, width: size.width, height: headerHeight)
 
-        // A glass bar behind the navigation row.
-        self.barGlass.frame = CGRect(x: 0.0, y: headerTop, width: size.width, height: barHeight)
-        self.barGlass.update(size: CGSize(width: size.width, height: barHeight), cornerRadius: 0.0, isDark: self.view.traitCollection.userInterfaceStyle == .dark, tintColor: GlassBackgroundView.TintColor(kind: .panel), isInteractive: false, isVisible: true, transition: .immediate)
-
         let buttonSize: CGFloat = 44.0
+        let bubbleSize: CGFloat = 36.0
+        let bubbleInset = floor((buttonSize - bubbleSize) / 2.0)
+        let bubbleY = headerTop + floor((barHeight - bubbleSize) / 2.0)
+        let isDark = self.view.traitCollection.userInterfaceStyle == .dark
+        self.leftBubble.frame = CGRect(x: 8.0 + bubbleInset, y: bubbleY, width: bubbleSize, height: bubbleSize)
+        self.leftBubble.update(size: CGSize(width: bubbleSize, height: bubbleSize), cornerRadius: bubbleSize / 2.0, isDark: isDark, tintColor: GlassBackgroundView.TintColor(kind: .panel), isInteractive: false, isVisible: true, transition: .immediate)
+        self.addBubble.frame = CGRect(x: size.width - buttonSize - 8.0 + bubbleInset, y: bubbleY, width: bubbleSize, height: bubbleSize)
+        self.addBubble.update(size: CGSize(width: bubbleSize, height: bubbleSize), cornerRadius: bubbleSize / 2.0, isDark: isDark, tintColor: GlassBackgroundView.TintColor(kind: .panel), isInteractive: false, isVisible: true, transition: .immediate)
 
         self.titleLabel.sizeToFit()
         self.titleLabel.frame = CGRect(
@@ -199,17 +206,6 @@ public final class PolySrvServerSelectController: ViewController, UITableViewDat
         super.viewDidAppear(animated)
 
         self.reloadServers()
-        self.updateDiagnostic()
-
-        if let account = self.account {
-            self.statusDisposable.set((account.network.connectionStatus
-            |> deliverOnMainQueue).start(next: { [weak self] status in
-                guard let self = self else {
-                    return
-                }
-                self.updateDiagnostic(status: status)
-            }))
-        }
 
         // Pull the published list so servers that are not bundled appear, and so
         // ones that were withdrawn disappear.
@@ -377,8 +373,7 @@ public final class PolySrvServerSelectController: ViewController, UITableViewDat
             case .telegram:
                 return self.telegramServer == nil ? 0 : 1
             case .custom:
-                // One row per server, then the row that adds one.
-                return self.customServers.count + 1
+                return self.customServers.count
             case .published:
                 return self.publishedServers.count
         }
@@ -403,18 +398,7 @@ public final class PolySrvServerSelectController: ViewController, UITableViewDat
         cell.textLabel?.textColor = self.theme.list.itemPrimaryTextColor
         cell.detailTextLabel?.textColor = self.theme.list.itemSecondaryTextColor
 
-        // The last row of the user's own section is the one that adds a server:
-        // there is always somewhere to go when the list is empty.
-        let isAddRow = indexPath.section < self.visibleSections.count
-            && self.visibleSections[indexPath.section] == .custom
-            && indexPath.row >= self.customServers.count
-        guard !isAddRow, let server = self.server(at: indexPath) else {
-            cell.textLabel?.text = "Add Server"
-            cell.textLabel?.textColor = self.theme.list.itemAccentColor
-            cell.detailTextLabel?.text = "Address, port and RSA key"
-            cell.imageView?.image = UIImage(systemName: "plus.circle.fill")?.withTintColor(self.theme.list.itemAccentColor, renderingMode: .alwaysOriginal)
-            cell.imageView?.contentMode = .scaleAspectFit
-            cell.accessoryType = .disclosureIndicator
+        guard let server = self.server(at: indexPath) else {
             return cell
         }
 
@@ -440,7 +424,6 @@ public final class PolySrvServerSelectController: ViewController, UITableViewDat
     public func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
         guard let server = self.server(at: indexPath) else {
-            self.presentEdit(server: nil)
             return
         }
         self.select(server)
@@ -466,8 +449,13 @@ public final class PolySrvServerSelectController: ViewController, UITableViewDat
 
     private func logo(for server: PolySrvServer) -> UIImage? {
         if server.isTelegram {
-            // The app's own Telegram mark, not an SF Symbol. (Falls back to the
-            // symbol if the asset is ever unavailable.)
+            // The real Telegram icon - white paper plane on a blue circle - from
+            // the app's own app-icon assets, the same lookup the app-icon picker
+            // uses (ThemeSettingsAppIconItem). Falls back to the mark and then to
+            // an SF Symbol if it is ever unavailable.
+            if let logo = UIImage(named: "BlueFilledIcon", in: getAppBundle(), compatibleWith: nil) {
+                return logo
+            }
             if let logo = UIImage(bundleImageName: "Chat/Context Menu/Telegram") {
                 return logo
             }

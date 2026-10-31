@@ -34,7 +34,7 @@ private final class PolySrvServerEditFieldRow: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         self.glass.frame = self.bounds
-        self.glass.update(size: self.bounds.size, cornerRadius: 12.0, isDark: self.traitCollection.userInterfaceStyle == .dark, tintColor: GlassBackgroundView.TintColor(kind: .panel), isInteractive: false, isVisible: true, transition: .immediate)
+        self.glass.update(size: self.bounds.size, cornerRadius: 12.0, isDark: self.traitCollection.userInterfaceStyle == .dark, tintColor: GlassBackgroundView.TintColor(kind: .panel), isInteractive: false, isVisible: false, transition: .immediate)
         let labelWidth: CGFloat = 118.0
         self.label.frame = CGRect(x: 16.0, y: 0.0, width: labelWidth, height: self.bounds.height)
         self.field.frame = CGRect(x: 16.0 + labelWidth, y: 0.0, width: max(0.0, self.bounds.width - labelWidth - 32.0), height: self.bounds.height)
@@ -67,7 +67,7 @@ private final class PolySrvServerEditKeyRow: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         self.glass.frame = self.bounds
-        self.glass.update(size: self.bounds.size, cornerRadius: 12.0, isDark: self.traitCollection.userInterfaceStyle == .dark, tintColor: GlassBackgroundView.TintColor(kind: .panel), isInteractive: false, isVisible: true, transition: .immediate)
+        self.glass.update(size: self.bounds.size, cornerRadius: 12.0, isDark: self.traitCollection.userInterfaceStyle == .dark, tintColor: GlassBackgroundView.TintColor(kind: .panel), isInteractive: false, isVisible: false, transition: .immediate)
         self.label.frame = CGRect(x: 16.0, y: 0.0, width: self.bounds.width - 32.0, height: 34.0)
         self.textView.frame = CGRect(x: 13.0, y: 34.0, width: max(0.0, self.bounds.width - 26.0), height: max(0.0, self.bounds.height - 40.0))
     }
@@ -94,7 +94,7 @@ private final class PolySrvServerEditSwitchRow: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         self.glass.frame = self.bounds
-        self.glass.update(size: self.bounds.size, cornerRadius: 12.0, isDark: self.traitCollection.userInterfaceStyle == .dark, tintColor: GlassBackgroundView.TintColor(kind: .panel), isInteractive: false, isVisible: true, transition: .immediate)
+        self.glass.update(size: self.bounds.size, cornerRadius: 12.0, isDark: self.traitCollection.userInterfaceStyle == .dark, tintColor: GlassBackgroundView.TintColor(kind: .panel), isInteractive: false, isVisible: false, transition: .immediate)
         self.label.frame = CGRect(x: 16.0, y: 0.0, width: max(0.0, self.bounds.width - 90.0), height: self.bounds.height)
         self.toggle.frame = CGRect(x: self.bounds.width - self.toggle.bounds.width - 16.0, y: floor((self.bounds.height - self.toggle.bounds.height) / 2.0), width: self.toggle.bounds.width, height: self.toggle.bounds.height)
     }
@@ -110,6 +110,8 @@ private final class PolySrvServerEditControllerNode: ASDisplayNode {
     private let titleLabel = UILabel()
     private let cancelButton = UIButton(type: .system)
     private let saveButton = UIButton(type: .system)
+    private let cancelBubble = GlassBackgroundView()
+    private let saveBubble = GlassBackgroundView()
     private let messageLabel = UILabel()
     private let scrollView = UIScrollView()
     private let contentView = UIView()
@@ -142,20 +144,31 @@ private final class PolySrvServerEditControllerNode: ASDisplayNode {
         self.contentView.backgroundColor = .clear
         self.scrollView.backgroundColor = .clear
 
-        // Rows are glass cards (each row draws its own GlassBackgroundView).
+        // Rows are the app's plain blocks (not glass), with a visible editable
+        // value and a placeholder so the field reads as editable.
         for row in self.rows {
-            row.backgroundColor = .clear
+            row.backgroundColor = self.theme.list.itemBlocksBackgroundColor
+            row.layer.cornerRadius = 12.0
+            row.clipsToBounds = true
         }
+        self.nameRow.field.placeholder = "Name"
+        self.descriptionRow.field.placeholder = "Optional"
+        self.hostRow.field.placeholder = "example.com"
+        self.portRow.field.placeholder = "443"
+        self.mainDcRow.field.placeholder = "2"
 
         self.titleLabel.font = UIFont.systemFont(ofSize: 17.0, weight: .semibold)
         self.titleLabel.textColor = self.theme.list.itemPrimaryTextColor
 
-        self.cancelButton.setTitle("Cancel", for: .normal)
-        self.cancelButton.titleLabel?.font = UIFont.systemFont(ofSize: 17.0)
+        // Round glass buttons: a back chevron and a check mark.
+        self.cancelButton.setImage(UIImage(systemName: "chevron.backward"), for: .normal)
+        self.cancelButton.accessibilityLabel = "Back"
+        self.cancelButton.tintColor = self.theme.list.itemPrimaryTextColor
         self.cancelButton.addTarget(self, action: #selector(self.cancelPressed), for: .touchUpInside)
 
-        self.saveButton.setTitle("Save", for: .normal)
-        self.saveButton.titleLabel?.font = UIFont.systemFont(ofSize: 17.0, weight: .semibold)
+        self.saveButton.setImage(UIImage(systemName: "checkmark"), for: .normal)
+        self.saveButton.accessibilityLabel = "Save"
+        self.saveButton.tintColor = self.theme.list.itemPrimaryTextColor
         self.saveButton.addTarget(self, action: #selector(self.savePressed), for: .touchUpInside)
 
         self.messageLabel.font = UIFont.systemFont(ofSize: 13.0)
@@ -181,6 +194,8 @@ private final class PolySrvServerEditControllerNode: ASDisplayNode {
         self.mainDcRow.field.isEnabled = !self.multiDcRow.toggle.isOn
         self.multiDcRow.toggle.addTarget(self, action: #selector(self.multiDcChanged), for: .valueChanged)
 
+        self.header.addSubview(self.cancelBubble)
+        self.header.addSubview(self.saveBubble)
         self.header.addSubview(self.titleLabel)
         self.header.addSubview(self.cancelButton)
         self.header.addSubview(self.saveButton)
@@ -231,18 +246,26 @@ private final class PolySrvServerEditControllerNode: ASDisplayNode {
     func updateLayout(size: CGSize, safeInsets: UIEdgeInsets) {
         let barHeight: CGFloat = 44.0
         let messageHeight: CGFloat = self.messageLabel.text?.isEmpty == false ? 40.0 : 0.0
-        let topInset = max(safeInsets.top, 24.0) + 8.0
+        let topInset = max(safeInsets.top, 47.0) + 12.0
         let headerHeight = topInset + barHeight + messageHeight
         self.header.frame = CGRect(x: 0.0, y: 0.0, width: size.width, height: headerHeight)
 
         self.titleLabel.sizeToFit()
         self.titleLabel.frame = CGRect(x: floor((size.width - self.titleLabel.bounds.width) / 2.0), y: topInset + floor((barHeight - self.titleLabel.bounds.height) / 2.0), width: self.titleLabel.bounds.width, height: self.titleLabel.bounds.height)
 
-        self.cancelButton.sizeToFit()
-        self.cancelButton.frame = CGRect(x: 16.0, y: topInset + floor((barHeight - self.cancelButton.bounds.height) / 2.0), width: self.cancelButton.bounds.width, height: self.cancelButton.bounds.height)
+        let buttonSize: CGFloat = 44.0
+        let bubbleSize: CGFloat = 36.0
+        let bubbleInset = floor((buttonSize - bubbleSize) / 2.0)
+        let bubbleY = topInset + floor((barHeight - bubbleSize) / 2.0)
+        let isDark = self.view.traitCollection.userInterfaceStyle == .dark
 
-        self.saveButton.sizeToFit()
-        self.saveButton.frame = CGRect(x: size.width - self.saveButton.bounds.width - 16.0, y: topInset + floor((barHeight - self.saveButton.bounds.height) / 2.0), width: self.saveButton.bounds.width, height: self.saveButton.bounds.height)
+        self.cancelButton.frame = CGRect(x: 8.0, y: topInset, width: buttonSize, height: barHeight)
+        self.cancelBubble.frame = CGRect(x: 8.0 + bubbleInset, y: bubbleY, width: bubbleSize, height: bubbleSize)
+        self.cancelBubble.update(size: CGSize(width: bubbleSize, height: bubbleSize), cornerRadius: bubbleSize / 2.0, isDark: isDark, tintColor: GlassBackgroundView.TintColor(kind: .panel), isInteractive: false, isVisible: true, transition: .immediate)
+
+        self.saveButton.frame = CGRect(x: size.width - buttonSize - 8.0, y: topInset, width: buttonSize, height: barHeight)
+        self.saveBubble.frame = CGRect(x: size.width - buttonSize - 8.0 + bubbleInset, y: bubbleY, width: bubbleSize, height: bubbleSize)
+        self.saveBubble.update(size: CGSize(width: bubbleSize, height: bubbleSize), cornerRadius: bubbleSize / 2.0, isDark: isDark, tintColor: GlassBackgroundView.TintColor(kind: .panel), isInteractive: false, isVisible: true, transition: .immediate)
 
         self.messageLabel.frame = CGRect(x: 16.0, y: topInset + barHeight, width: size.width - 32.0, height: messageHeight)
 
@@ -251,7 +274,7 @@ private final class PolySrvServerEditControllerNode: ASDisplayNode {
         let rowInset: CGFloat = 16.0
         var y: CGFloat = 12.0
         for row in self.rows {
-            let height: CGFloat = row === self.keyRow ? 150.0 : 44.0
+            let height: CGFloat = row === self.keyRow ? 220.0 : 44.0
             row.frame = CGRect(x: rowInset, y: y, width: max(0.0, size.width - rowInset * 2.0), height: height)
             y += height + 8.0
         }

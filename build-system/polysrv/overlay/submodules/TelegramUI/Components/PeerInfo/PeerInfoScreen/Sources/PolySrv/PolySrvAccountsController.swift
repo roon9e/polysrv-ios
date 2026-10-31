@@ -17,56 +17,25 @@ private struct PolySrvAccountsGroup {
 private final class PolySrvAccountsControllerNode: ASDisplayNode {
     private let theme: PresentationTheme
     let tableView: UITableView
-    private let header = UIView()
-    private let titleLabel = UILabel()
-    // Reached by the controller to wire up its action, so not private.
-    let closeButton = UIButton(type: .system)
 
     init(theme: PresentationTheme) {
         self.theme = theme
         self.tableView = UITableView(frame: .zero, style: .insetGrouped)
         super.init()
-        self.titleLabel.text = "Accounts"
-        self.titleLabel.font = UIFont.systemFont(ofSize: 17.0, weight: .semibold)
-        self.titleLabel.textColor = theme.list.itemPrimaryTextColor
-        self.closeButton.setTitle("Close", for: .normal)
-        self.closeButton.titleLabel?.font = UIFont.systemFont(ofSize: 17.0)
     }
 
     override func didLoad() {
         super.didLoad()
 
         self.view.backgroundColor = self.theme.list.plainBackgroundColor
-        self.header.backgroundColor = self.theme.list.plainBackgroundColor
         self.tableView.backgroundColor = self.theme.list.plainBackgroundColor
-        self.header.addSubview(self.titleLabel)
-        self.header.addSubview(self.closeButton)
-        self.view.addSubview(self.header)
         self.view.addSubview(self.tableView)
     }
 
-    func updateLayout(size: CGSize, safeInsets: UIEdgeInsets) {
-        let barHeight: CGFloat = 44.0
-        let headerHeight = safeInsets.top + barHeight
-        self.header.frame = CGRect(x: 0.0, y: 0.0, width: size.width, height: headerHeight)
-
-        self.titleLabel.sizeToFit()
-        self.titleLabel.frame = CGRect(
-            x: floor((size.width - self.titleLabel.bounds.width) / 2.0),
-            y: safeInsets.top + floor((barHeight - self.titleLabel.bounds.height) / 2.0),
-            width: self.titleLabel.bounds.width,
-            height: self.titleLabel.bounds.height
-        )
-
-        self.closeButton.sizeToFit()
-        self.closeButton.frame = CGRect(
-            x: 16.0,
-            y: safeInsets.top + floor((barHeight - self.closeButton.bounds.height) / 2.0),
-            width: self.closeButton.bounds.width,
-            height: self.closeButton.bounds.height
-        )
-
-        self.tableView.frame = CGRect(x: 0.0, y: headerHeight, width: size.width, height: max(0.0, size.height - headerHeight))
+    // The app's navigation bar (the screen is pushed into a NavigationController)
+    // supplies the title and the back button; the list simply starts below it.
+    func updateLayout(size: CGSize, topInset: CGFloat) {
+        self.tableView.frame = CGRect(x: 0.0, y: topInset, width: size.width, height: max(0.0, size.height - topInset))
     }
 }
 
@@ -87,7 +56,9 @@ public final class PolySrvAccountsController: ViewController, UITableViewDataSou
 
     public init(context: AccountContext) {
         self.context = context
-        super.init(navigationBarPresentationData: nil)
+        let presentationData = context.sharedContext.currentPresentationData.with { $0 }
+        super.init(navigationBarPresentationData: NavigationBarPresentationData(theme: NavigationBarTheme(rootControllerTheme: presentationData.theme), strings: NavigationBarStrings(presentationStrings: presentationData.strings)))
+        self.title = "Accounts"
     }
 
     public required init(coder aDecoder: NSCoder) {
@@ -102,7 +73,6 @@ public final class PolySrvAccountsController: ViewController, UITableViewDataSou
         let node = PolySrvAccountsControllerNode(theme: self.context.sharedContext.currentPresentationData.with { $0 }.theme)
         node.tableView.dataSource = self
         node.tableView.delegate = self
-        node.closeButton.addTarget(self, action: #selector(self.closePressed), for: .touchUpInside)
         self.displayNode = node
         self.displayNodeDidLoad()
     }
@@ -110,7 +80,8 @@ public final class PolySrvAccountsController: ViewController, UITableViewDataSou
     public override func containerLayoutUpdated(_ layout: ContainerViewLayout, transition: ContainedViewLayoutTransition) {
         super.containerLayoutUpdated(layout, transition: transition)
         self.validLayout = layout
-        self.controllerNode.updateLayout(size: layout.size, safeInsets: layout.safeInsets)
+        let navigationHeight = self.navigationLayout(layout: layout).navigationFrame.maxY
+        self.controllerNode.updateLayout(size: layout.size, topInset: max(navigationHeight, layout.safeInsets.top))
     }
 
     public override func viewDidAppear(_ animated: Bool) {
